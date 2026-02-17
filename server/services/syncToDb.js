@@ -22,7 +22,7 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10)
 }
 
-export async function runFullSync(accessToken, forceFull = false) {
+export async function runFullSync(accessToken, forceFull = false, skipAds = false) {
   let since = FULL_SINCE
   let until = today()
   let incremental = false
@@ -95,7 +95,8 @@ export async function runFullSync(accessToken, forceFull = false) {
     }
     // incremental + 0 results : pas de suppression (Meta peut avoir retourné vide)
 
-    // Sync ads_raw pour Winners
+    // Sync ads_raw pour Winners (skip si skipAds=true pour accélérer)
+    if (!skipAds) {
     const insightsParams = {
       fields: 'ad_name,ad_id,spend,impressions,clicks,action_values',
       level: 'ad',
@@ -140,6 +141,7 @@ export async function runFullSync(accessToken, forceFull = false) {
       await db.insertAdsRaw(syncRun.id, adsRaw)
     } else if (!incremental) {
       await db.replaceAdsRaw(syncRun.id, adsRaw)
+    }
     }
 
     await db.updateSyncRun(syncRun.id, { status: 'success', campaignsCount: results.length })

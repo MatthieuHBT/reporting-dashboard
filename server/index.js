@@ -86,6 +86,17 @@ if (process.env.FRONTEND_URL) corsOrigins.push(process.env.FRONTEND_URL)
 app.use(cors({ origin: corsOrigins }))
 app.use(express.json())
 
+// Vercel: restore original path (rewrite sends /api/xxx → /api?__originalPath=xxx)
+app.use((req, res, next) => {
+  const p = req.query?.__originalPath
+  if (p && typeof p === 'string') {
+    const rest = (req.url.split('?')[1] || '').replace(/__originalPath=[^&]+&?/, '').replace(/&$/, '')
+    req.url = '/api/' + p + (rest ? '?' + rest : '')
+    delete req.query.__originalPath
+  }
+  next()
+})
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ ok: true })
@@ -292,12 +303,16 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
   }
   try {
     const forceFull = req.query.full === '1' || req.body?.full === true
+    const skipAds = req.query.skipAds === '1' || req.body?.skipAds === true
     const { runFullSync } = await import('./services/syncToDb.js')
-    const result = await runFullSync(metaToken, forceFull)
+    const result = await runFullSync(metaToken, forceFull, skipAds)
     res.json(result)
   } catch (err) {
     console.error(err)
-    res.status(500).json({ error: err.message || 'Refresh failed' })
+    res.status(500).json({
+      error: err.message || 'Refresh failed',
+      hint: err.message?.includes('timeout') ? 'Sync trop longue (60s max). Essaie un sync complet moins souvent.' : null
+    })
   }
 })
 

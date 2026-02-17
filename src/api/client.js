@@ -31,11 +31,16 @@ export const api = {
       me: () => request('/auth/db/me'),
     },
   },
-  refresh: (accessToken, opts = {}) =>
-    request(`/refresh${opts.full ? '?full=1' : ''}`, {
+  refresh: (accessToken, opts = {}) => {
+    const params = new URLSearchParams()
+    if (opts.full) params.set('full', '1')
+    if (opts.skipAds) params.set('skipAds', '1')
+    const qs = params.toString()
+    return request(`/refresh${qs ? '?' + qs : ''}`, {
       method: 'POST',
       body: JSON.stringify({ accessToken: accessToken || undefined }),
-    }),
+    })
+  },
   settings: {
     metaToken: {
       get: () => request('/settings/meta-token'),
