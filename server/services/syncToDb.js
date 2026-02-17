@@ -22,12 +22,12 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10)
 }
 
-export async function runFullSync(accessToken, forceFull = false, skipAds = false) {
+export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false) {
   let since = FULL_SINCE
   let until = today()
   let incremental = false
 
-  if (!forceFull) {
+  if (!forceFull && !winnersOnly) {
     const last = await db.getLatestSyncRun()
     if (last?.date_until) {
       const lastUntil = typeof last.date_until === 'string' ? last.date_until : last.date_until?.toISOString?.()?.slice(0, 10)
@@ -53,6 +53,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     const accounts = data.data || []
     const results = []
 
+    if (!winnersOnly) {
     for (const acc of accounts) {
       try {
         const insights = await fetchMetaData(accessToken, `/${acc.id}/insights`, {
@@ -86,21 +87,22 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
         console.warn(`Skip account ${acc.name}:`, e.message)
       }
     }
+    }
 
-    if (incremental && results.length > 0) {
+    if (!winnersOnly && incremental && results.length > 0) {
       await db.deleteCampaignsFromDate(since)
       await db.insertCampaigns(syncRun.id, results)
-    } else if (!incremental) {
+    } else if (!winnersOnly && !incremental) {
       await db.replaceCampaigns(syncRun.id, results)
     }
-    // incremental + 0 results : pas de suppression (Meta peut avoir retourné vide)
 
-    // Sync ads_raw pour Winners (skip si skipAds=true pour accélérer)
-    if (!skipAds) {
+    // Sync ads_raw pour Winners (toujours si winnersOnly, sinon si !skipAds)
+    if (winnersOnly || !skipAds) {
     const insightsParams = {
       fields: 'ad_name,ad_id,spend,impressions,clicks,action_values',
       level: 'ad',
       limit: 500,
+      time_increment: 1,
       time_range: timeRange,
     }
     const adsRaw = []
@@ -144,10 +146,12 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     }
     }
 
-    await db.updateSyncRun(syncRun.id, { status: 'success', campaignsCount: results.length })
+    const campaignsCount = winnersOnly ? 0 : results.length
+    await db.updateSyncRun(syncRun.id, { status: 'success', campaignsCount })
     return {
       success: true,
-      campaignsCount: results.length,
+      campaignsCount,
+      winnersOnly,
       syncedAt: new Date().toISOString(),
       incremental,
       range: { since, until },

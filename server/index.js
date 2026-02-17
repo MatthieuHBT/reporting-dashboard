@@ -304,8 +304,9 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
   try {
     const forceFull = req.query.full === '1' || req.body?.full === true
     const skipAds = req.query.skipAds === '1' || req.body?.skipAds === true
+    const winnersOnly = req.query.winnersOnly === '1' || req.body?.winnersOnly === true
     const { runFullSync } = await import('./services/syncToDb.js')
-    const result = await runFullSync(metaToken, forceFull, skipAds)
+    const result = await runFullSync(metaToken, forceFull, skipAds, winnersOnly)
     res.json(result)
   } catch (err) {
     console.error(err)

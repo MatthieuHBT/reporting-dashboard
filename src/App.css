@@ -457,6 +457,14 @@
   margin-bottom: 20px;
 }
 
+.api-error-actions {
+  display: flex;
+  gap: 8px;
+}
+.api-error-banner button.secondary {
+  background: var(--border);
+  color: var(--text);
+}
 .api-error-banner button {
   padding: 8px 16px;
   background: #ef4444;

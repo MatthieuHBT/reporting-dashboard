@@ -162,10 +162,10 @@ function App() {
         })
         .finally(() => setAuthChecked(true))
     } else {
-      api.auth.status()
-        .then((r) => setConnected(!!r.connected))
-        .catch(() => setConnected(false))
-        .finally(() => setAuthChecked(true))
+      // Pas de JWT = login requis (on n'utilise plus auth.status car META_ACCESS_TOKEN
+      // en env ferait croire qu'on est connecté alors qu'on ne l'est pas)
+      setConnected(false)
+      setAuthChecked(true)
     }
   }, [])
 
@@ -420,13 +420,14 @@ function App() {
   )
   const budgetPercent = totalBudget ? Math.round((totalSpend / totalBudget) * 100) : 0
 
-  const handleRefreshFromMeta = async () => {
+  const handleRefreshFromMeta = async (opts = {}) => {
     if (!dbMode || !getStoredToken()) return
     setIsRefreshing(true)
     setApiError(null)
     try {
-      await api.refresh()
+      await api.refresh(null, opts)
       await fetchSpend()
+      if (activeTab === 'winners') fetchWinners()
       setLastUpdate(new Date())
     } catch (err) {
       setApiError(err.message || 'Refresh failed')
@@ -660,7 +661,18 @@ function App() {
         {apiError && (activeTab === 'spend' || activeTab === 'general') && (
           <div className="api-error-banner">
             <span>{apiError}</span>
-            <button onClick={fetchSpend}>Retry</button>
+            <div className="api-error-actions">
+              <button onClick={fetchSpend}>Recharger</button>
+              {dbMode && (
+                <button
+                  className="secondary"
+                  onClick={() => handleRefreshFromMeta({ skipAds: true })}
+                  title="Sync Spend uniquement (plus rapide)"
+                >
+                  Sync rapide
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -946,6 +958,17 @@ function App() {
                   ))}
                 </div>
                 <div className="filter-group">
+                  {dbMode && (
+                    <button
+                      className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
+                      onClick={() => handleRefreshFromMeta({ full: true, winnersOnly: true })}
+                      disabled={isRefreshing}
+                      title="Synchroniser les Winners depuis Meta"
+                    >
+                      <RefreshCw size={16} />
+                      {isRefreshing ? 'Sync…' : 'Sync Winners'}
+                    </button>
+                  )}
                   <Filter size={16} />
                   <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account (market)">
                     <option value="">All ad accounts</option>
@@ -985,7 +1008,9 @@ function App() {
             </section>
             <section className="table-section full-width">
               {filteredWinners.length === 0 && (
-                <p className="empty-state-msg">Aucune donnée winners — synchronisez depuis Meta (winners.json ou API).</p>
+                <p className="empty-state-msg">
+                  Aucune donnée winners. Clique sur <strong>Sync Winners</strong> ci-dessus pour charger les ads depuis Meta.
+                </p>
               )}
               <div className="table-wrap">
                 <table className="winners-table">

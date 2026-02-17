@@ -35,6 +35,7 @@ export const api = {
     const params = new URLSearchParams()
     if (opts.full) params.set('full', '1')
     if (opts.skipAds) params.set('skipAds', '1')
+    if (opts.winnersOnly) params.set('winnersOnly', '1')
     const qs = params.toString()
     return request(`/refresh${qs ? '?' + qs : ''}`, {
       method: 'POST',
