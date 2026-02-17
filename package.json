@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:api": "cd server && npm run dev",
     "sync": "cd server && node sync-all.js",
+    "db:migrate-winners": "cd server && node migrate-winners-to-db.js",
     "compare-meta": "cd server && node compare-meta.js",
     "report-clients": "cd server && node report-clients.js",
     "build": "vite build",

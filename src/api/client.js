@@ -2,6 +2,10 @@ const _api = import.meta.env.VITE_API_URL?.replace(/\/$/, '') || ''
 const API_BASE = _api ? (_api.endsWith('/api') ? _api : _api + '/api') : '/api'
 const AUTH_KEY = 'vp_auth_token'
 
+export function getApiBase() {
+  return API_BASE
+}
+
 export function getStoredToken() {
   return localStorage.getItem(AUTH_KEY)
 }
@@ -23,7 +27,11 @@ async function request(path, options = {}) {
     const msg = e.message || 'Erreur réseau'
     throw new Error(`${msg} — URL: ${url}`)
   }
+  const ct = res.headers.get('content-type') || ''
   const data = await res.json().catch(() => ({}))
+  if (!ct.includes('application/json') && res.ok) {
+    throw new Error(`API a renvoyé du HTML au lieu de JSON — VITE_API_URL configurée ? (${url})`)
+  }
   if (!res.ok) {
     const msg = data.error || data.message || (res.status === 401 ? 'Session expirée' : res.status === 503 ? 'Service indisponible' : `Erreur ${res.status}`)
     throw new Error(msg)
