@@ -1,4 +1,5 @@
-const API_BASE = import.meta.env.VITE_API_URL?.replace(/\/$/, '') || '/api'
+const _api = import.meta.env.VITE_API_URL?.replace(/\/$/, '') || ''
+const API_BASE = _api ? (_api.endsWith('/api') ? _api : _api + '/api') : '/api'
 const AUTH_KEY = 'vp_auth_token'
 
 export function getStoredToken() {
