@@ -16,10 +16,12 @@ async function request(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...options.headers }
   if (token) headers['Authorization'] = `Bearer ${token}`
   let res
+  const url = `${API_BASE}${path}`
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...options, headers })
+    res = await fetch(url, { ...options, headers })
   } catch (e) {
-    throw new Error(e.message || 'Erreur réseau — vérifie la connexion')
+    const msg = e.message || 'Erreur réseau'
+    throw new Error(`${msg} — URL: ${url}`)
   }
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
