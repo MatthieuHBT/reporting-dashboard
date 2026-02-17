@@ -134,3 +134,68 @@ export async function replaceCampaigns(syncRunId, campaigns) {
   await sql`TRUNCATE TABLE campaigns RESTART IDENTITY CASCADE`
   await insertCampaigns(syncRunId, campaigns)
 }
+
+/** Supprime les ads_raw à partir d'une date */
+export async function deleteAdsRawFromDate(since) {
+  guard()
+  await sql`DELETE FROM ads_raw WHERE date >= ${since}`
+}
+
+/** Insère des ads pour Winners */
+export async function insertAdsRaw(syncRunId, ads) {
+  guard()
+  const BATCH = 100
+  for (let i = 0; i < ads.length; i += BATCH) {
+    const batch = ads.slice(i, i + BATCH)
+    for (const a of batch) {
+      await sql`
+        INSERT INTO ads_raw (sync_run_id, ad_id, ad_name, account_id, account_name, date, spend, impressions, clicks, purchase_value)
+        VALUES (
+          ${syncRunId},
+          ${a.adId || null},
+          ${a.adName || null},
+          ${a.accountId || null},
+          ${a.accountName || null},
+          ${a.date || null},
+          ${a.spend || 0},
+          ${a.impressions || 0},
+          ${a.clicks || 0},
+          ${a.purchaseValue || 0}
+        )
+      `
+    }
+  }
+}
+
+/** Remplace tous les ads_raw (pour full sync) */
+export async function replaceAdsRaw(syncRunId, ads) {
+  guard()
+  await sql`TRUNCATE TABLE ads_raw RESTART IDENTITY CASCADE`
+  if (ads.length > 0) await insertAdsRaw(syncRunId, ads)
+}
+
+/** Récupère les ads_raw pour Winners (filtrage par date, account) */
+export async function getAdsRaw(since, until, accountName = null) {
+  guard()
+  let rows
+  if (since && until && accountName) {
+    rows = await sql`SELECT * FROM ads_raw WHERE date >= ${since} AND date <= ${until} AND account_name = ${accountName}`
+  } else if (accountName) {
+    rows = await sql`SELECT * FROM ads_raw WHERE account_name = ${accountName}`
+  } else if (since && until) {
+    rows = await sql`SELECT * FROM ads_raw WHERE date >= ${since} AND date <= ${until}`
+  } else {
+    rows = await sql`SELECT * FROM ads_raw`
+  }
+  return rows.map((r) => ({
+    adId: r.ad_id,
+    adName: r.ad_name,
+    accountId: r.account_id,
+    accountName: r.account_name,
+    date: r.date ? r.date.toISOString().slice(0, 10) : null,
+    spend: parseFloat(r.spend || 0),
+    impressions: parseInt(r.impressions || 0, 10),
+    clicks: parseInt(r.clicks || 0, 10),
+    purchaseValue: parseFloat(r.purchase_value || 0),
+  }))
+}

@@ -2,8 +2,9 @@
  * Sync Meta API → Neon DB
  * Appelé par POST /api/refresh
  * Incrémentale par défaut (depuis dernière sync), full si ?full=1 ou pas de dernière sync
+ * Sync campaigns (spend) + ads_raw (winners)
  */
-import { fetchMetaData } from './metaApi.js'
+import { fetchMetaData, fetchMetaDataAllPages } from './metaApi.js'
 import { parseCampaignName } from '../utils/campaignNaming.js'
 import { extractMarketFromAccount } from '../utils/accountNaming.js'
 import * as db from '../db/spend.js'
@@ -93,6 +94,54 @@ export async function runFullSync(accessToken, forceFull = false) {
       await db.replaceCampaigns(syncRun.id, results)
     }
     // incremental + 0 results : pas de suppression (Meta peut avoir retourné vide)
+
+    // Sync ads_raw pour Winners
+    const insightsParams = {
+      fields: 'ad_name,ad_id,spend,impressions,clicks,action_values',
+      level: 'ad',
+      limit: 500,
+      time_range: timeRange,
+    }
+    const adsRaw = []
+    for (const acc of accounts) {
+      try {
+        const insights = await fetchMetaDataAllPages(accessToken, `/${acc.id}/insights`, insightsParams)
+        const ads = insights.data || []
+        for (const a of ads) {
+          let purchaseValue = 0
+          if (a.action_values && Array.isArray(a.action_values)) {
+            const purchase = a.action_values.find(
+              (av) =>
+                av.action_type &&
+                (av.action_type.includes('purchase') ||
+                  av.action_type.includes('fb_pixel_purchase') ||
+                  av.action_type === 'purchase')
+            )
+            if (purchase?.value) purchaseValue = parseFloat(purchase.value)
+          }
+          adsRaw.push({
+            adId: a.ad_id,
+            adName: a.ad_name || a.ad_id || '-',
+            accountId: acc.id,
+            accountName: acc.name,
+            date: a.date_start || a.date_stop || null,
+            spend: parseFloat(a.spend || 0),
+            impressions: parseInt(a.impressions || 0, 10),
+            clicks: parseInt(a.clicks || 0, 10),
+            purchaseValue,
+          })
+        }
+      } catch (e) {
+        console.warn(`Skip account ${acc.name} for winners:`, e.message)
+      }
+    }
+    if (incremental && adsRaw.length > 0) {
+      await db.deleteAdsRawFromDate(since)
+      await db.insertAdsRaw(syncRun.id, adsRaw)
+    } else if (!incremental) {
+      await db.replaceAdsRaw(syncRun.id, adsRaw)
+    }
+
     await db.updateSyncRun(syncRun.id, { status: 'success', campaignsCount: results.length })
     return {
       success: true,

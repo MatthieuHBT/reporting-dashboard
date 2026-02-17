@@ -520,8 +520,58 @@ async function fetchSpendFromApi(req, res) {
   }
 }
 
-// Winners: lit depuis data/winners.json + filtre par date + agrégation par ad
+// Winners: BDD (ads_raw) > data/winners.json > API Meta live
 app.get('/api/reports/winners', async (req, res) => {
+  const { datePreset, since, until, account } = req.query
+  const range = getDateRange(datePreset, since, until)
+
+  if (hasDb()) {
+    try {
+      const dbSpend = await import('./db/spend.js')
+      const rows = await dbSpend.getAdsRaw(range?.since, range?.until, account || null)
+      const byAd = {}
+      for (const r of rows) {
+        const key = r.adId || r.adName
+        if (!byAd[key]) {
+          byAd[key] = { adName: r.adName, adId: r.adId, spend: 0, impressions: 0, clicks: 0, purchaseValue: 0 }
+        }
+        byAd[key].spend += r.spend || 0
+        byAd[key].impressions += r.impressions || 0
+        byAd[key].clicks += r.clicks || 0
+        byAd[key].purchaseValue += r.purchaseValue || 0
+      }
+      const { parseAdName } = await import('./utils/parseAdNaming.js')
+      let aggregated = Object.values(byAd)
+        .sort((a, b) => b.spend - a.spend)
+        .map((ad, i) => {
+          const parsed = parseAdName(ad.adName)
+          const roas = ad.spend > 0 && ad.purchaseValue > 0 ? Math.round((ad.purchaseValue / ad.spend) * 100) / 100 : null
+          return {
+            rank: i + 1,
+            adName: ad.adName,
+            market: parsed.codeCountry || '-',
+            product: parsed.productName || 'Other',
+            format: parsed.format || '-',
+            spend: ad.spend,
+            impressions: ad.impressions,
+            clicks: ad.clicks,
+            roas: roas ?? '-',
+            ctr: ad.impressions > 0 ? Math.round((ad.clicks / ad.impressions) * 1000) / 10 : null,
+          }
+        })
+      if (account) {
+        const targetMkt = (extractMarketFromAccount(account) || parseCampaignName(account).codeCountry || '').toUpperCase()
+        if (targetMkt) {
+          aggregated = aggregated.filter((w) => (w.market || '').toUpperCase() === targetMkt)
+          aggregated = aggregated.map((w, i) => ({ ...w, rank: i + 1 }))
+        }
+      }
+      return res.json({ winners: aggregated })
+    } catch (err) {
+      console.error('DB winners error:', err)
+    }
+  }
+
   const winnersPath = join(DATA_DIR, 'winners.json')
   if (existsSync(winnersPath)) {
     try {
