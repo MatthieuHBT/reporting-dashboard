@@ -430,7 +430,8 @@ function App() {
       if (activeTab === 'winners') fetchWinners()
       setLastUpdate(new Date())
     } catch (err) {
-      setApiError(err.message || 'Refresh failed')
+      setApiError(err?.message || err?.toString?.() || 'Sync échouée')
+      console.error('Sync error:', err)
     } finally {
       setIsRefreshing(false)
     }
@@ -658,20 +659,30 @@ function App() {
           </div>
         )}
 
-        {apiError && (activeTab === 'spend' || activeTab === 'general') && (
+        {apiError && (
           <div className="api-error-banner">
             <span>{apiError}</span>
             <div className="api-error-actions">
-              <button onClick={fetchSpend}>Recharger</button>
-              {dbMode && (
-                <button
-                  className="secondary"
-                  onClick={() => handleRefreshFromMeta({ skipAds: true })}
-                  title="Sync Spend uniquement (plus rapide)"
-                >
-                  Sync rapide
+              {(activeTab === 'spend' || activeTab === 'general') && (
+                <>
+                  <button onClick={fetchSpend}>Recharger</button>
+                  {dbMode && (
+                    <button
+                      className="secondary"
+                      onClick={() => handleRefreshFromMeta({ skipAds: true })}
+                      title="Sync Spend uniquement (plus rapide)"
+                    >
+                      Sync rapide
+                    </button>
+                  )}
+                </>
+              )}
+              {activeTab === 'winners' && dbMode && (
+                <button onClick={() => handleRefreshFromMeta({ full: true, winnersOnly: true })}>
+                  Réessayer Sync Winners
                 </button>
               )}
+              <button className="secondary" onClick={() => setApiError(null)}>Fermer</button>
             </div>
           </div>
         )}

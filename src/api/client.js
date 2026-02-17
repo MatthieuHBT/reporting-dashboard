@@ -14,9 +14,17 @@ async function request(path, options = {}) {
   const token = getStoredToken()
   const headers = { 'Content-Type': 'application/json', ...options.headers }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
+  let res
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...options, headers })
+  } catch (e) {
+    throw new Error(e.message || 'Erreur réseau — vérifie la connexion')
+  }
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  if (!res.ok) {
+    const msg = data.error || data.message || (res.status === 401 ? 'Session expirée' : res.status === 503 ? 'Service indisponible' : `Erreur ${res.status}`)
+    throw new Error(msg)
+  }
   return data
 }
 
