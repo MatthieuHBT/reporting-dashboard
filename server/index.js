@@ -226,6 +226,33 @@ app.post('/api/settings/meta-token', requireDbUser, requireDbAdmin, async (req, 
   }
 })
 
+// Test Meta token (admin): vérifie que le token fonctionne avec l'API Meta
+app.post('/api/settings/meta-token/test', requireDbUser, requireDbAdmin, async (req, res) => {
+  let metaToken = process.env.META_ACCESS_TOKEN || null
+  if (!metaToken && hasDb()) {
+    try {
+      const { getMetaToken } = await import('./db/settings.js')
+      metaToken = await getMetaToken()
+    } catch {}
+  }
+  if (!metaToken) {
+    return res.status(400).json({ error: 'Aucun token Meta configuré. Enregistre un token dans les Settings ou définis META_ACCESS_TOKEN.' })
+  }
+  try {
+    const data = await fetchMetaData(metaToken, '/me/adaccounts', { fields: 'id,name', limit: 1 })
+    const count = (data.data || []).length
+    res.json({ ok: true, message: `Token valide — ${count} ad account(s) accessible(s).`, accountsCount: count })
+  } catch (err) {
+    const is190 = err.status === 401
+    res.status(400).json({
+      error: err.message || 'Échec de la connexion Meta',
+      hint: is190
+        ? 'Token expiré ou invalide. Génère un nouveau token dans Graph API Explorer (ads_management, ads_read, business_management).'
+        : null,
+    })
+  }
+})
+
 // Users (admin only, DB)
 app.get('/api/users', requireDbUser, requireDbAdmin, async (req, res) => {
   if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
@@ -305,15 +332,22 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
     const forceFull = req.query.full === '1' || req.body?.full === true
     const skipAds = req.query.skipAds === '1' || req.body?.skipAds === true
     const winnersOnly = req.query.winnersOnly === '1' || req.body?.winnersOnly === true
+    const winnersDays = req.query.days ? parseInt(req.query.days, 10) : null
     const { runFullSync } = await import('./services/syncToDb.js')
-    const result = await runFullSync(metaToken, forceFull, skipAds, winnersOnly)
+    const result = await runFullSync(metaToken, forceFull, skipAds, winnersOnly, winnersDays)
     res.json(result)
   } catch (err) {
-    console.error(err)
-    res.status(500).json({
-      error: err.message || 'Refresh failed',
-      hint: err.message?.includes('timeout') ? 'Sync trop longue (60s max). Essaie un sync complet moins souvent.' : null
-    })
+    const msg = err?.message || err?.toString?.() || 'Refresh failed'
+    console.error('[refresh]', err)
+    let hint = null
+    if (msg?.includes('timeout') || err?.code === 'ETIMEDOUT') {
+      hint = 'Sync trop longue (timeout). Essaie un sync rapide (Sync rapide) ou winners only.'
+    } else if (err?.status === 401 || /invalid|expired|190|access token/i.test(msg)) {
+      hint = 'Token Meta expiré ou invalide. Va dans Settings → Tester le token, puis génère un nouveau token dans Graph API Explorer.'
+    }
+    if (!res.headersSent) {
+      res.status(500).json({ error: msg, hint })
+    }
   }
 })
 
@@ -753,6 +787,17 @@ app.get('/api/utils/parse-campaign', (req, res) => {
   const { name } = req.query
   if (!name) return res.status(400).json({ error: 'Campaign name required' })
   res.json(parseCampaignName(name))
+})
+
+// Handler erreurs global (réponse JSON pour /api)
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err)
+  console.error('[API error]', err)
+  const msg = err?.message || err?.toString?.() || 'Erreur interne'
+  if (req.path?.startsWith?.('/api') || req.url?.startsWith?.('/api')) {
+    return res.status(500).json({ error: msg, hint: 'Vérifier les logs serveur.' })
+  }
+  next(err)
 })
 
 export default app

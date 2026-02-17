@@ -94,7 +94,7 @@ function App() {
   const [filterAccount, setFilterAccount] = useState('')
   const [winnersSortBy, setWinnersSortBy] = useState('spend')
   const [winnersSortDir, setWinnersSortDir] = useState('desc') // desc = meilleur en premier
-  const [winnersMinSpend, setWinnersMinSpend] = useState(100)
+  const [winnersMinSpend, setWinnersMinSpend] = useState(0)
   const [stockFilterWarehouse, setStockFilterWarehouse] = useState('')
   const [spendData, setSpendData] = useState(null)
   const [winnersData, setWinnersData] = useState(null)
@@ -425,10 +425,15 @@ function App() {
     setIsRefreshing(true)
     setApiError(null)
     try {
-      await api.refresh(null, opts)
+      const result = await api.refresh(null, opts)
       await fetchSpend()
       if (activeTab === 'winners') fetchWinners()
       setLastUpdate(new Date())
+      // Log info sync (incrémentale vs full) pour diagnostic
+      if (result?.range) {
+        const mode = result.incremental ? 'incrémentale' : (result.alreadyUpToDate ? 'à jour' : 'complète')
+        console.log(`Sync OK (${mode}): ${result.range?.since} → ${result.range?.until}, ${result.campaignsCount ?? 0} campaigns`)
+      }
     } catch (err) {
       setApiError(err?.message || err?.toString?.() || 'Sync échouée')
       console.error('Sync error:', err)
@@ -705,6 +710,8 @@ function App() {
                   {dateRange === 'custom' && (
                     <div className="date-range-inputs">
                       <input
+                        id="date-from-spend"
+                        name="dateFrom"
                         type="date"
                         value={dateFrom}
                         onChange={(e) => setDateFrom(e.target.value)}
@@ -713,6 +720,8 @@ function App() {
                       />
                       <span className="date-sep">→</span>
                       <input
+                        id="date-to-spend"
+                        name="dateTo"
                         type="date"
                         value={dateTo}
                         onChange={(e) => setDateTo(e.target.value)}
@@ -725,19 +734,19 @@ function App() {
                 </div>
                 <div className="filter-group">
                   <Filter size={16} />
-                  <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account (market)">
+                  <select id="filter-account-spend" name="filterAccount" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account (market)">
                     <option value="">All ad accounts</option>
                     {accountOptions.map((a) => (
                       <option key={a} value={a}>{a}</option>
                     ))}
                   </select>
-                  <select value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
+                  <select id="filter-product-spend" name="filterProduct" value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
                     <option value="">All products</option>
                     {productOptions.map((p) => (
                       <option key={p} value={p}>{p}</option>
                     ))}
                   </select>
-                  <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} title="Model">
+                  <select id="filter-model-spend" name="filterModel" value={filterModel} onChange={(e) => setFilterModel(e.target.value)} title="Model">
                     <option value="">COD / DROP</option>
                     <option value="COD">COD</option>
                     <option value="DROP">DROP</option>
@@ -746,9 +755,9 @@ function App() {
                 {dbMode && (
                   <button
                     className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
-                    onClick={handleRefreshFromMeta}
+                    onClick={() => handleRefreshFromMeta({ skipAds: true })}
                     disabled={isRefreshing}
-                    title="Fetch from Meta API and update database"
+                    title="Sync Spend (campaigns) uniquement — plus rapide, évite timeout"
                   >
                     <RefreshCw size={16} />
                     {isRefreshing ? 'Syncing…' : 'Refresh from Meta'}
@@ -972,7 +981,7 @@ function App() {
                   {dbMode && (
                     <button
                       className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
-                      onClick={() => handleRefreshFromMeta({ full: true, winnersOnly: true })}
+                      onClick={() => handleRefreshFromMeta({ winnersOnly: true })}
                       disabled={isRefreshing}
                       title="Synchroniser les Winners depuis Meta"
                     >
@@ -981,21 +990,23 @@ function App() {
                     </button>
                   )}
                   <Filter size={16} />
-                  <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account (market)">
+                  <select id="filter-account-winners" name="filterAccountWinners" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account (market)">
                     <option value="">All ad accounts</option>
                     {accountOptions.map((a) => (
                       <option key={a} value={a}>{a}</option>
                     ))}
                   </select>
-                  <select value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
+                  <select id="filter-product-winners" name="filterProductWinners" value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
                     <option value="">All products</option>
                     {productOptions.map((p) => (
                       <option key={p} value={p}>{p}</option>
                     ))}
                   </select>
-                  <label className="min-spend-filter" title="Spend minimum en $">
+                  <label className="min-spend-filter" htmlFor="winners-min-spend" title="Spend minimum en $">
                     Min $
                     <input
+                      id="winners-min-spend"
+                      name="winnersMinSpend"
                       type="number"
                       min={0}
                       step={50}
@@ -1118,9 +1129,9 @@ function App() {
                   ))}
                   {dateRange === 'custom' && (
                     <div className="date-range-inputs">
-                      <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} max={dateTo} className="date-input" />
+                      <input id="date-from-general" name="dateFromGeneral" type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} max={dateTo} className="date-input" />
                       <span className="date-sep">→</span>
-                      <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} min={dateFrom} max={format(new Date(), 'yyyy-MM-dd')} className="date-input" />
+                      <input id="date-to-general" name="dateToGeneral" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} min={dateFrom} max={format(new Date(), 'yyyy-MM-dd')} className="date-input" />
                     </div>
                   )}
                 </div>
@@ -1304,7 +1315,7 @@ function App() {
               <div className="filters-row">
                 <div className="filter-group">
                   <Filter size={16} />
-                  <select value={stockFilterWarehouse} onChange={(e) => setStockFilterWarehouse(e.target.value)}>
+                  <select id="stock-filter-warehouse" name="stockFilterWarehouse" value={stockFilterWarehouse} onChange={(e) => setStockFilterWarehouse(e.target.value)}>
                     <option value="">All warehouses</option>
                     {[].map((w) => (
                       <option key={w} value={w}>{w}</option>

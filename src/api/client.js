@@ -33,8 +33,13 @@ async function request(path, options = {}) {
     throw new Error(`API a renvoyé du HTML au lieu de JSON — VITE_API_URL configurée ? (${url})`)
   }
   if (!res.ok) {
-    const msg = data.error || data.message || (res.status === 401 ? 'Session expirée' : res.status === 503 ? 'Service indisponible' : `Erreur ${res.status}`)
-    throw new Error(msg)
+    const ct = res.headers.get('content-type') || ''
+    const msg = data?.error || data?.message || (res.status === 401 ? 'Session expirée' : res.status === 503 ? 'Service indisponible' : `Erreur ${res.status}`)
+    const full = data?.hint ? `${msg} — ${data.hint}` : msg
+    if (!ct.includes('application/json') && res.status >= 500) {
+      throw new Error(`${full} (réponse non-JSON — vérifier les logs serveur)`)
+    }
+    throw new Error(full)
   }
   return data
 }
@@ -55,6 +60,7 @@ export const api = {
     if (opts.full) params.set('full', '1')
     if (opts.skipAds) params.set('skipAds', '1')
     if (opts.winnersOnly) params.set('winnersOnly', '1')
+    if (opts.days) params.set('days', String(opts.days))
     const qs = params.toString()
     return request(`/refresh${qs ? '?' + qs : ''}`, {
       method: 'POST',
@@ -65,6 +71,7 @@ export const api = {
     metaToken: {
       get: () => request('/settings/meta-token'),
       set: (token) => request('/settings/meta-token', { method: 'POST', body: JSON.stringify({ token: token || '' }) }),
+      test: () => request('/settings/meta-token/test', { method: 'POST' }),
     },
   },
   users: {

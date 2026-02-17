@@ -129,24 +129,32 @@ export default function Admin({ dbMode, onSave }) {
       {showForm && (
         <div className="add-member-form">
           <input
+            id="member-name"
+            name="memberName"
             type="text"
             placeholder="Name"
             value={newMember.name}
             onChange={(e) => setNewMember((p) => ({ ...p, name: e.target.value }))}
           />
           <input
+            id="member-email"
+            name="memberEmail"
             type="email"
             placeholder="Email"
             value={newMember.email}
             onChange={(e) => setNewMember((p) => ({ ...p, email: e.target.value }))}
           />
           <input
+            id="member-password"
+            name="memberPassword"
             type="password"
             placeholder="Password"
             value={newMember.password}
             onChange={(e) => setNewMember((p) => ({ ...p, password: e.target.value }))}
           />
           <select
+            id="member-role"
+            name="memberRole"
             value={newMember.role}
             onChange={(e) => setNewMember((p) => ({ ...p, role: e.target.value }))}
           >
@@ -189,8 +197,10 @@ export default function Admin({ dbMode, onSave }) {
                 </td>
                 {PAGE_IDS.map((pid) => (
                   <td key={pid}>
-                    <label className="permission-checkbox">
+                    <label className="permission-checkbox" htmlFor={`page-${m.id}-${pid}`}>
                       <input
+                        id={`page-${m.id}-${pid}`}
+                        name={`page_${pid}`}
                         type="checkbox"
                         checked={m.role === 'admin' || (m.pages || []).includes(pid)}
                         disabled={m.role === 'admin'}

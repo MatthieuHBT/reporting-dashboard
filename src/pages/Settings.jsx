@@ -7,14 +7,30 @@ export default function Settings() {
   const [token, setToken] = useState('')
   const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
+  const [testResult, setTestResult] = useState(null)
 
   useEffect(() => {
     api.settings.metaToken.get()
       .then((r) => setConfigured(r.configured))
       .catch(() => setConfigured(false))
   }, [])
+
+  const handleTestToken = async () => {
+    setError('')
+    setTestResult(null)
+    setTesting(true)
+    try {
+      const r = await api.settings.metaToken.test()
+      setTestResult({ ok: true, message: r.message || 'Token valide' })
+    } catch (err) {
+      setTestResult({ ok: false, message: err.message })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   const handleSave = async (e) => {
     e.preventDefault()
@@ -41,7 +57,7 @@ export default function Settings() {
       </header>
       <div className="settings-card">
         <p className="settings-desc">
-          Token Meta pour le bouton &quot;Refresh from Meta&quot;. Stocké en BDD.
+          Token Meta pour le bouton &quot;Refresh from Meta&quot;. Utilisé : token en BDD (ci‑dessous) ou META_ACCESS_TOKEN dans le .env du serveur.
         </p>
         <p className="settings-help">
           <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer">
@@ -53,6 +69,7 @@ export default function Settings() {
           <label htmlFor="meta-token">Access Token</label>
           <textarea
             id="meta-token"
+            name="metaToken"
             value={token}
             onChange={(e) => setToken(e.target.value)}
             placeholder={configured ? '•••••••• (leave empty to keep current)' : 'EAAxxxx...'}
@@ -60,6 +77,21 @@ export default function Settings() {
             disabled={saving}
           />
           {configured && <span className="settings-badge">Configured</span>}
+          <button
+            type="button"
+            onClick={handleTestToken}
+            disabled={testing}
+            className="save-btn outline"
+            title="Tester la validité du token Meta (BDD ou .env)"
+          >
+            {testing ? <span className="spinner" /> : 'Tester le token'}
+          </button>
+          {testResult && (
+            <div className={testResult.ok ? 'settings-success' : 'settings-error'}>
+              {testResult.ok ? '✓' : <AlertCircle size={16} />}
+              {testResult.message}
+            </div>
+          )}
           {error && (
             <div className="settings-error">
               <AlertCircle size={16} />

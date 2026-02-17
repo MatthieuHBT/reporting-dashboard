@@ -10,6 +10,8 @@ import { extractMarketFromAccount } from '../utils/accountNaming.js'
 import * as db from '../db/spend.js'
 
 const FULL_SINCE = '2025-01-01'
+const FIRST_SYNC_DAYS = 30
+const WINNERS_MAX_DAYS = 60
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -22,15 +24,19 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10)
 }
 
-export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false) {
+export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false, winnersDays = null) {
   let since = FULL_SINCE
   let until = today()
   let incremental = false
 
-  if (!forceFull && !winnersOnly) {
+  if (winnersOnly) {
+    const days = winnersDays ?? WINNERS_MAX_DAYS
+    since = addDays(until, -Math.min(days, 365))
+  } else if (!forceFull) {
     const last = await db.getLatestSyncRun()
-    if (last?.date_until) {
-      const lastUntil = typeof last.date_until === 'string' ? last.date_until : last.date_until?.toISOString?.()?.slice(0, 10)
+    const lastUntilVal = last?.date_until ?? last?.dateUntil
+    if (lastUntilVal) {
+      const lastUntil = typeof lastUntilVal === 'string' ? lastUntilVal : lastUntilVal?.toISOString?.()?.slice(0, 10)
       const nextSince = addDays(lastUntil, 1)
       if (nextSince > until) {
         return { success: true, campaignsCount: 0, syncedAt: new Date().toISOString(), incremental: false, range: { since, until }, alreadyUpToDate: true }
@@ -39,6 +45,9 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
         since = nextSince
         incremental = true
       }
+    } else {
+      // Première sync (base vide) : limite à 30j pour éviter timeout
+      since = addDays(until, -FIRST_SYNC_DAYS)
     }
   }
 
