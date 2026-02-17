@@ -1,0 +1,23 @@
+{
+  "name": "reporting-dashboard-api",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "query-meta": "node query-meta.js",
+    "refresh-products": "node refresh-product-names.js",
+    "db:seed": "node db/seed.js",
+    "db:migrate": "node db/migrate.js",
+    "db:migrate-spend": "node migrate-spend-to-db.js"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0",
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "node-fetch": "^3.3.2"
+  }
+}
