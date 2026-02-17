@@ -15,18 +15,24 @@ export function setStoredToken(token) {
   else localStorage.removeItem(AUTH_KEY)
 }
 
+const FETCH_TIMEOUT = 30000 // 30s
+
 async function request(path, options = {}) {
   const token = getStoredToken()
   const headers = { 'Content-Type': 'application/json', ...options.headers }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  let res
   const url = `${API_BASE}${path}`
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT)
+  let res
   try {
-    res = await fetch(url, { ...options, headers })
+    res = await fetch(url, { ...options, headers, signal: controller.signal })
   } catch (e) {
-    const msg = e.message || 'Erreur réseau'
+    clearTimeout(timeoutId)
+    const msg = e.name === 'AbortError' ? 'Requête expirée (30s). Vérifie VITE_API_URL et la connexion.' : (e.message || 'Erreur réseau')
     throw new Error(`${msg} — URL: ${url}`)
   }
+  clearTimeout(timeoutId)
   const ct = res.headers.get('content-type') || ''
   const data = await res.json().catch(() => ({}))
   if (!ct.includes('application/json') && res.ok) {
