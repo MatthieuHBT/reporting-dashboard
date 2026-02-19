@@ -592,6 +592,40 @@
   margin-top: 4px;
 }
 
+.goal-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.goal-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.goal-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-dark);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.goal-btn:hover {
+  border-color: var(--accent);
+}
+
+.goal-value {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 /* Chart */
 .chart-total {
   margin: -0.25rem 0 0.5rem;

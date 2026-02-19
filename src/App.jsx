@@ -42,6 +42,8 @@ import Settings from './pages/Settings'
 import { PAGE_IDS, PAGE_LABELS } from './data/members'
 import './App.css'
 
+const SPEND_TODAY_GOAL_KEY = 'vp_spend_today_goal'
+
 const SIDEBAR_SECTIONS = [
   {
     title: 'General',
@@ -109,6 +111,16 @@ function App() {
   const [budgetsList, setBudgetsList] = useState([])
   const [budgetsLoading, setBudgetsLoading] = useState(false)
   const hasSetInitialTab = useRef(false)
+
+  const [spendTodayGoal, setSpendTodayGoal] = useState(() => {
+    try {
+      const raw = localStorage.getItem(SPEND_TODAY_GOAL_KEY)
+      const n = raw == null ? null : Number(raw)
+      return Number.isFinite(n) ? Math.max(0, n) : null
+    } catch {
+      return null
+    }
+  })
 
   const fetchBudgets = useCallback(async () => {
     setBudgetsLoading(true)
@@ -548,6 +560,28 @@ function App() {
   const totalDailyBudget = spendBudgetMeta?.totalDailyBudget
   const budgetPercent = totalDailyBudget && totalSpendToday != null ? Math.round((totalSpendToday / totalDailyBudget) * 100) : 0
   const { daysInRange } = spendBudgetMeta || {}
+
+  // Objectif Spend aujourd'hui (persisté en localStorage)
+  useEffect(() => {
+    if (spendTodayGoal != null) return
+    if (typeof totalSpendToday !== 'number') return
+    const guess = Math.max(0, Math.round(totalSpendToday / 10) * 10)
+    setSpendTodayGoal(guess)
+    try {
+      localStorage.setItem(SPEND_TODAY_GOAL_KEY, String(guess))
+    } catch {}
+  }, [spendTodayGoal, totalSpendToday])
+
+  const adjustSpendTodayGoal = useCallback((delta) => {
+    setSpendTodayGoal((prev) => {
+      const base = Number(prev ?? 0)
+      const next = Math.max(0, Math.round((base + delta) * 100) / 100)
+      try {
+        localStorage.setItem(SPEND_TODAY_GOAL_KEY, String(next))
+      } catch {}
+      return next
+    })
+  }, [])
 
   const handleRefreshFromMeta = async (opts = {}) => {
     if (!dbMode || !getStoredToken()) return
@@ -1000,7 +1034,16 @@ function App() {
                 <div className="stat-card-value">
                   {totalSpendToday != null ? `$${Number(totalSpendToday).toLocaleString()}` : '-'}
                 </div>
-                <div className="stat-card-sub">ce jour</div>
+                <div className="stat-card-sub goal-row">
+                  <span>ce jour</span>
+                  <span className="goal-controls" title="Objectif Spend aujourd'hui">
+                    <button className="goal-btn" onClick={() => adjustSpendTodayGoal(-10)} type="button">-10</button>
+                    <span className="goal-value">
+                      Objectif: {spendTodayGoal != null ? `$${Number(spendTodayGoal).toLocaleString()}` : '—'}
+                    </span>
+                    <button className="goal-btn" onClick={() => adjustSpendTodayGoal(10)} type="button">+10</button>
+                  </span>
+                </div>
               </div>
               <div className={`stat-card ${budgetPercent >= 90 && totalDailyBudget ? 'alert' : 'accent'}`}>
                 <div className="stat-card-label">Budget jour utilisé</div>
