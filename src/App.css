@@ -75,6 +75,45 @@
   line-height: 1.5;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal-content {
+  background: var(--bg-card);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  max-width: 900px;
+  max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h3 { margin: 0; font-size: 1.1rem; }
+.modal-body {
+  overflow: auto;
+  padding: 16px;
+}
+.modal-footer-note { margin: 12px 0 0; font-size: 0.9rem; color: var(--text-muted); }
+.budgets-modal .budgets-table-wrap { max-height: 60vh; overflow-y: auto; margin-bottom: 8px; }
+.delivery-status { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; }
+.delivery-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.delivery-status.delivery-active .delivery-dot { background: #22c55e; }
+.delivery-status.delivery-off .delivery-dot { background: #94a3b8; }
+
 .sync-spinner {
   color: var(--accent);
   animation: spin 1s linear infinite;

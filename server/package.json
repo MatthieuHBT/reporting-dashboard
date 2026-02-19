@@ -9,7 +9,11 @@
     "refresh-products": "node refresh-product-names.js",
     "db:seed": "node db/seed.js",
     "db:migrate": "node db/migrate.js",
-    "db:migrate-spend": "node migrate-spend-to-db.js"
+    "db:migrate-spend": "node migrate-spend-to-db.js",
+    "db:migrate-budgets": "node db/migrate-budgets.js",
+    "sync-budgets": "node run-sync-budgets.js",
+    "sync-budgets:full": "node run-sync-budgets.js --full",
+    "fetch-budgets": "node fetch-budgets.js"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.0",

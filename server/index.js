@@ -41,6 +41,16 @@ function getDateRange(datePreset, since, until) {
   }
 }
 
+/** Nombre de jours dans la plage (since/until inclus), minimum 1 */
+function getDaysInRange(since, until) {
+  if (!since || !until) return 1
+  const start = new Date(since)
+  const end = new Date(until)
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return 1
+  const diff = Math.round((end - start) / (24 * 60 * 60 * 1000)) + 1
+  return Math.max(1, diff)
+}
+
 /** Récupère tous les ad accounts Meta (y compris sans campagnes) et les fusionne avec la liste existante */
 async function mergeAllAdAccounts(existingAccounts = []) {
   let token = process.env.META_ACCESS_TOKEN
@@ -371,6 +381,70 @@ app.get('/api/ad-accounts', requireAuth, async (req, res) => {
   }
 })
 
+// Spend aujourd'hui en direct depuis Meta (pour afficher le spend du jour)
+app.get('/api/reports/spend-today', async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  let metaToken = process.env.META_ACCESS_TOKEN
+  if (!metaToken) {
+    try {
+      const { getMetaToken } = await import('./db/settings.js')
+      metaToken = await getMetaToken()
+    } catch {}
+  }
+  if (!metaToken) {
+    return res.status(400).json({ error: 'Configure Meta token in Settings (admin)' })
+  }
+  const today = new Date().toISOString().slice(0, 10)
+  const timeRange = JSON.stringify({ since: today, until: today })
+  try {
+    const data = await fetchMetaData(metaToken, '/me/adaccounts', { fields: 'id,name', limit: 500 })
+    const accounts = data.data || []
+    const campaigns = []
+    const byAccount = {}
+    for (const acc of accounts) {
+      try {
+        const insights = await fetchMetaData(metaToken, `/${acc.id}/insights`, {
+          fields: 'spend,impressions,clicks,campaign_name,campaign_id',
+          level: 'campaign',
+          time_increment: 1,
+          limit: 500,
+          time_range: timeRange,
+        })
+        const list = insights.data || []
+        for (const c of list) {
+          const parsed = parseCampaignName(c.campaign_name || '')
+          const { date: _namingDate, ...restParsed } = parsed
+          const marketFromAccount = extractMarketFromAccount(acc.name)
+          const codeCountry = restParsed.codeCountry || marketFromAccount || ''
+          const row = {
+            accountId: acc.id,
+            accountName: acc.name,
+            campaignId: c.campaign_id,
+            campaignName: c.campaign_name,
+            date: c.date_start || c.date_stop || today,
+            spend: parseFloat(c.spend || 0),
+            impressions: parseInt(c.impressions || 0, 10),
+            clicks: parseInt(c.clicks || 0, 10),
+            codeCountry,
+            ...restParsed,
+            namingDate: _namingDate,
+          }
+          campaigns.push(row)
+          const key = acc.name || acc.id
+          byAccount[key] = (byAccount[key] || 0) + row.spend
+        }
+      } catch (e) {
+        console.warn(`Spend today: skip ${acc.name}:`, e.message)
+      }
+    }
+    const totalSpendToday = campaigns.reduce((s, r) => s + r.spend, 0)
+    res.json({ campaigns, totalSpendToday: Math.round(totalSpendToday * 100) / 100, byAccount })
+  } catch (err) {
+    console.error('[spend-today]', err)
+    res.status(err.status || 500).json({ error: err?.message || 'Failed to fetch spend today' })
+  }
+})
+
 // Spend report: DB si configuré, sinon data/spend.json, sinon API Meta
 app.get('/api/reports/spend', async (req, res) => {
   const { datePreset, since, until, account } = req.query
@@ -383,16 +457,22 @@ app.get('/api/reports/spend', async (req, res) => {
       const filteredCampaigns = await dbSpend.getCampaigns(range?.since, range?.until, accountName)
       const fromDb = await dbSpend.getDistinctAccounts()
       const allAccounts = await mergeAllAdAccounts(fromDb)
+      let budgetByAccount = {}
+      try {
+        const dbBudgets = await import('./db/budgets.js')
+        budgetByAccount = await dbBudgets.getBudgetsByAccount()
+      } catch (_) {}
       const byAccount = {}
       const byProduct = {}
       const byMarket = {}
       for (const r of filteredCampaigns) {
         const accKey = r.accountName || r.accountId
-        byAccount[accKey] = (byAccount[accKey] || { spend: 0, impressions: 0 })
+        byAccount[accKey] = (byAccount[accKey] || { spend: 0, impressions: 0, budget: 0 })
         byAccount[accKey].spend += r.spend || 0
         byAccount[accKey].impressions += r.impressions || 0
         byAccount[accKey].accountName = r.accountName
         byAccount[accKey].accountId = r.accountId
+        byAccount[accKey].budget = budgetByAccount[accKey] || 0
         const prodKey = r.productWithAnimal || (r.animal ? `${(r.productName || 'Other').trim()} ${r.animal}`.trim() : (r.productName || 'Other'))
         byProduct[prodKey] = (byProduct[prodKey] || { spend: 0, impressions: 0 })
         byProduct[prodKey].spend += r.spend || 0
@@ -403,13 +483,29 @@ app.get('/api/reports/spend', async (req, res) => {
         byMarket[mktKey].spend += r.spend || 0
         byMarket[mktKey].market = mktKey
       }
+      const daysInRange = getDaysInRange(range?.since, range?.until)
+      const byAccountList = Object.values(byAccount).map((a) => {
+        const dailyBudget = parseFloat(a.budget) || 0
+        const budgetPeriod = Math.round(dailyBudget * daysInRange * 100) / 100
+        return {
+          ...a,
+          dailyBudget,
+          budgetPeriod,
+          budget: budgetPeriod,
+        }
+      })
+      const totalDailyBudget = byAccountList.reduce((s, a) => s + (a.dailyBudget || 0), 0)
+      const totalBudgetPeriod = Math.round(totalDailyBudget * daysInRange * 100) / 100
       return res.json({
         campaigns: filteredCampaigns,
-        byAccount: Object.values(byAccount),
+        byAccount: byAccountList,
         byProduct: Object.values(byProduct),
         byMarket: Object.values(byMarket),
         totalSpend: filteredCampaigns.reduce((s, r) => s + (r.spend || 0), 0),
         accounts: allAccounts,
+        daysInRange,
+        totalDailyBudget: Math.round(totalDailyBudget * 100) / 100,
+        totalBudgetPeriod,
       })
     } catch (err) {
       console.error('DB spend error:', err)
@@ -781,8 +877,19 @@ async function fetchWinnersFromApi(req, res) {
   }
 }
 
+// Budgets campagnes
+app.get('/api/campaigns/budgets', async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  try {
+    const dbBudgets = await import('./db/budgets.js')
+    const list = await dbBudgets.listCampaignBudgets(req.query.account || null)
+    res.json({ budgets: list })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Campaign naming parser
-// CBO_[CODE_COUNTRY]_[PRODUCT NAME]_[ANIMAL]_[TYPE]_[DATE]
 app.get('/api/utils/parse-campaign', (req, res) => {
   const { name } = req.query
   if (!name) return res.status(400).json({ error: 'Campaign name required' })

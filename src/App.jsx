@@ -18,6 +18,7 @@ import {
   ChevronUp,
   ChevronDown,
   Sparkles,
+  DollarSign,
 } from 'lucide-react'
 import {
   LineChart,
@@ -52,6 +53,7 @@ const SIDEBAR_SECTIONS = [
     title: 'Reporting Ads Manager',
     items: [
       { id: 'spend', label: 'Spend', icon: BarChart3 },
+      { id: 'budget', label: 'Budget', icon: DollarSign },
     ],
   },
   {
@@ -97,12 +99,62 @@ function App() {
   const [winnersMinSpend, setWinnersMinSpend] = useState(0)
   const [stockFilterWarehouse, setStockFilterWarehouse] = useState('')
   const [spendData, setSpendData] = useState(null)
+  const [spendTodayData, setSpendTodayData] = useState(null)
   const [winnersData, setWinnersData] = useState(null)
   const [apiError, setApiError] = useState(null)
   const [selectedWinner, setSelectedWinner] = useState(null)
   const [currentUser, setCurrentUser] = useState(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [showBudgetsModal, setShowBudgetsModal] = useState(false)
+  const [budgetsList, setBudgetsList] = useState([])
+  const [budgetsLoading, setBudgetsLoading] = useState(false)
   const hasSetInitialTab = useRef(false)
+
+  const fetchBudgets = useCallback(async () => {
+    setBudgetsLoading(true)
+    try {
+      const data = await api.campaigns.budgets(filterAccount ? { account: filterAccount } : {})
+      setBudgetsList(data.budgets || [])
+      setShowBudgetsModal(true)
+    } catch (err) {
+      setApiError(err.message)
+    } finally {
+      setBudgetsLoading(false)
+    }
+  }, [filterAccount])
+
+  const loadBudgetsForPage = useCallback(async () => {
+    if (!dbMode) return
+    setBudgetsLoading(true)
+    try {
+      const data = await api.campaigns.budgets(filterAccount ? { account: filterAccount } : {})
+      setBudgetsList(data.budgets || [])
+    } catch (err) {
+      setApiError(err?.message)
+    } finally {
+      setBudgetsLoading(false)
+    }
+  }, [dbMode, filterAccount])
+
+  // Spend par campagne (période sélectionnée) pour le modal budgets
+  const spendByCampaignId = useMemo(() => {
+    const map = {}
+    for (const c of spendData?.campaigns || []) {
+      const id = c.campaignId || c.campaignName
+      if (id) map[id] = (map[id] || 0) + (c.spend || 0)
+    }
+    return map
+  }, [spendData?.campaigns])
+
+  // Spend du jour par campagne (journée en cours) pour les tableaux budgets
+  const spendTodayByCampaignId = useMemo(() => {
+    const map = {}
+    for (const c of spendTodayData?.campaigns || []) {
+      const id = c.campaignId
+      if (id) map[id] = (map[id] || 0) + (c.spend || 0)
+    }
+    return map
+  }, [spendTodayData?.campaigns])
 
 
   const canAccess = (pageId) => {
@@ -201,12 +253,26 @@ function App() {
   }, [dateRange, dateFrom, dateTo, filterAccount])
 
   useEffect(() => {
-    if (activeTab === 'spend' || activeTab === 'general' || activeTab === 'winners') fetchSpend()
+    if (activeTab === 'spend' || activeTab === 'general' || activeTab === 'winners' || activeTab === 'budget') fetchSpend()
   }, [activeTab, dateRange, dateFrom, dateTo, filterAccount, fetchSpend])
+
+  useEffect(() => {
+    if ((activeTab === 'spend' || activeTab === 'budget') && dbMode) {
+      api.reports.spendToday()
+        .then((data) => setSpendTodayData(data))
+        .catch(() => setSpendTodayData(null))
+    } else {
+      setSpendTodayData(null)
+    }
+  }, [activeTab, dbMode])
 
   useEffect(() => {
     if (activeTab === 'winners') fetchWinners()
   }, [activeTab, dateRange, dateFrom, dateTo, filterAccount, fetchWinners])
+
+  useEffect(() => {
+    if (activeTab === 'budget' && dbMode) loadBudgetsForPage()
+  }, [activeTab, dbMode, filterAccount, loadBudgetsForPage])
 
   const handleLogout = async () => {
     try {
@@ -240,12 +306,19 @@ function App() {
     allMarkets,
     allAccounts,
     rawCampaigns,
+    spendBudgetMeta,
   } = useMemo(() => {
     if (spendData?.campaigns?.length) {
       let campaigns = [...spendData.campaigns]
       const getProductKey = (c) => c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
       if (filterProduct) campaigns = campaigns.filter((c) => getProductKey(c) === filterProduct)
       if (filterModel) campaigns = campaigns.filter((c) => extractModel(c.accountName || '') === filterModel)
+
+      const budgetByKey = {}
+      for (const b of spendData.byAccount || []) {
+        const key = b.accountName || b.accountId
+        if (key) budgetByKey[key] = { dailyBudget: b.dailyBudget ?? b.budget, budgetPeriod: b.budgetPeriod ?? (b.budget || 0), budget: b.budget ?? 0 }
+      }
 
       const colors = ['#f59e0b', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4']
       const byAccount = {}
@@ -269,13 +342,19 @@ function App() {
         byMarket[mktKey].spend += r.spend || 0
         byMarket[mktKey].market = mktKey
       }
-      const accountList = Object.values(byAccount).map((a) => ({
-        account: a.accountName || a.accountId,
-        spend: Math.round(a.spend * 100) / 100,
-        budget: 0,
-        country: extractCountry(a.accountName),
-        model: extractModel(a.accountName),
-      }))
+      const accountList = Object.values(byAccount).map((a) => {
+        const accKey = a.accountName || a.accountId
+        const budgetInfo = budgetByKey[accKey] || {}
+        return {
+          account: accKey,
+          spend: Math.round(a.spend * 100) / 100,
+          budget: budgetInfo.budgetPeriod ?? budgetInfo.budget ?? 0,
+          dailyBudget: budgetInfo.dailyBudget ?? 0,
+          budgetPeriod: budgetInfo.budgetPeriod ?? budgetInfo.budget ?? 0,
+          country: extractCountry(a.accountName),
+          model: extractModel(a.accountName),
+        }
+      })
       const productList = Object.values(byProduct).map((p) => ({
         product: p.product || 'Other',
         spend: Math.round(p.spend * 100) / 100,
@@ -328,6 +407,11 @@ function App() {
         allMarkets: allMkts.length ? allMkts : [],
         allAccounts,
         rawCampaigns: rawCampaignsList,
+        spendBudgetMeta: {
+          daysInRange: spendData.daysInRange,
+          totalDailyBudget: spendData.totalDailyBudget,
+          totalBudgetPeriod: spendData.totalBudgetPeriod,
+        },
       }
     }
     // Pas de données inventées — uniquement Meta/DB
@@ -338,6 +422,7 @@ function App() {
       spendTrend: [],
       allProducts: [],
       allMarkets: [],
+      spendBudgetMeta: null,
       allAccounts: [],
       rawCampaigns: [],
     }
@@ -418,7 +503,27 @@ function App() {
     () => filteredSpendByAccount.reduce((s, r) => s + (r.budget || 0), 0),
     [filteredSpendByAccount]
   )
-  const budgetPercent = totalBudget ? Math.round((totalSpend / totalBudget) * 100) : 0
+  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  const { spendTodayByAccount, totalSpendToday } = useMemo(() => {
+    if (spendTodayData?.byAccount != null) {
+      return {
+        spendTodayByAccount: spendTodayData.byAccount,
+        totalSpendToday: spendTodayData.totalSpendToday ?? 0,
+      }
+    }
+    const byAccount = {}
+    let total = 0
+    for (const c of spendData?.campaigns || []) {
+      if (c.date !== todayStr) continue
+      const key = c.accountName || c.accountId
+      byAccount[key] = (byAccount[key] || 0) + (c.spend || 0)
+      total += c.spend || 0
+    }
+    return { spendTodayByAccount: byAccount, totalSpendToday: Math.round(total * 100) / 100 }
+  }, [spendTodayData, spendData?.campaigns, todayStr])
+  const totalDailyBudget = spendBudgetMeta?.totalDailyBudget
+  const budgetPercent = totalDailyBudget && totalSpendToday != null ? Math.round((totalSpendToday / totalDailyBudget) * 100) : 0
+  const { daysInRange } = spendBudgetMeta || {}
 
   const handleRefreshFromMeta = async (opts = {}) => {
     if (!dbMode || !getStoredToken()) return
@@ -428,6 +533,8 @@ function App() {
       const result = await api.refresh(null, opts)
       await fetchSpend()
       if (activeTab === 'winners') fetchWinners()
+      if (activeTab === 'budget') loadBudgetsForPage()
+      api.reports.spendToday().then((data) => setSpendTodayData(data)).catch(() => {})
       setLastUpdate(new Date())
       // Log info sync (incrémentale vs full) pour diagnostic
       if (result?.range) {
@@ -558,6 +665,80 @@ function App() {
           </div>
         </div>
       )}
+      {showBudgetsModal && (
+        <div className="modal-overlay" onClick={() => setShowBudgetsModal(false)}>
+          <div className="modal-content budgets-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Budgets campagnes (Meta API)</h3>
+              <button className="close-btn" onClick={() => setShowBudgetsModal(false)} aria-label="Fermer">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              {budgetsList.length === 0 ? (
+                <p>Aucun budget. Lance &quot;Refresh from Meta&quot; ou <code>npm run fetch-budgets</code> en local.</p>
+              ) : budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0).length === 0 ? (
+                <p>Aucune campagne avec spend sur la période sélectionnée.</p>
+              ) : (
+                <>
+                  <div className="budgets-table-wrap">
+                  <table className="winners-table">
+                    <thead>
+                      <tr>
+                        <th>Campagne</th>
+                        <th>Account</th>
+                        <th>Delivery</th>
+                        <th className="num">Budget / jour</th>
+                        <th className="num">Spend jour</th>
+                        <th className="num">Spend</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {budgetsList
+                        .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                        .sort((a, b) => (b.dailyBudget || b.lifetimeBudget / 30) - (a.dailyBudget || a.lifetimeBudget / 30))
+                        .map((b) => {
+                          const spend = spendByCampaignId[b.campaignId]
+                          const spendJour = spendTodayByCampaignId[b.campaignId]
+                          const status = (b.effectiveStatus || '').toUpperCase()
+                          const isActive = status === 'ACTIVE'
+                          const label = status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu'
+                          return (
+                          <tr key={`${b.accountId}-${b.campaignId}`}>
+                            <td><code>{b.campaignName?.slice(0, 60)}{(b.campaignName?.length || 0) > 60 ? '…' : ''}</code></td>
+                            <td>{b.accountName}</td>
+                            <td>
+                              <span className={`delivery-status delivery-${isActive ? 'active' : 'off'}`} title="Statut de diffusion (Meta)">
+                                <span className="delivery-dot" />
+                                {label}
+                              </span>
+                            </td>
+                            <td className="num">{b.dailyBudget ? `$${b.dailyBudget.toLocaleString()}` : '-'}</td>
+                            <td className="num">{typeof spendJour === 'number' ? `$${spendJour.toLocaleString()}` : '-'}</td>
+                            <td className="num">{typeof spend === 'number' ? `$${spend.toLocaleString()}` : '-'}</td>
+                          </tr>
+                          )
+                        })}
+                    </tbody>
+                  </table>
+                  </div>
+                  <p className="modal-footer-note">
+                    {(() => {
+                      const withSpend = budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                      const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE').length
+                      const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
+                      const detail = withSpend.length > 0
+                        ? ` · ${active} Active${unknown > 0 ? `, ${unknown} statut inconnu (relancer un sync Meta pour mettre à jour)` : ''}`
+                        : ''
+                      return `${withSpend.length} campagnes avec spend${detail}`
+                    })()}
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <button
         className="mobile-menu-btn"
         onClick={() => setSidebarOpen(true)}
@@ -647,6 +828,7 @@ function App() {
           <div className="header-left">
             <h1>
               {activeTab === 'spend' && 'Reporting Ads Manager — Spend'}
+              {activeTab === 'budget' && 'Reporting Ads Manager — Budget'}
               {activeTab === 'winners' && 'Winners — Ads by spend & ROAS'}
               {activeTab === 'stock' && 'Stock'}
               {activeTab === 'general' && 'General — Vue globale'}
@@ -668,7 +850,7 @@ function App() {
           <div className="api-error-banner">
             <span>{apiError}</span>
             <div className="api-error-actions">
-              {(activeTab === 'spend' || activeTab === 'general') && (
+              {(activeTab === 'spend' || activeTab === 'general' || activeTab === 'budget') && (
                 <>
                   <button onClick={fetchSpend}>Recharger</button>
                   {dbMode && (
@@ -683,7 +865,7 @@ function App() {
                 </>
               )}
               {activeTab === 'winners' && dbMode && (
-                <button onClick={() => handleRefreshFromMeta({ full: true, winnersOnly: true })}>
+                <button onClick={() => handleRefreshFromMeta({ winnersOnly: true })}>
                   Réessayer Sync Winners
                 </button>
               )}
@@ -763,6 +945,15 @@ function App() {
                     {isRefreshing ? 'Syncing…' : 'Refresh from Meta'}
                   </button>
                 )}
+                <button
+                  className="export-btn"
+                  onClick={fetchBudgets}
+                  disabled={budgetsLoading}
+                  title="Voir les budgets des campagnes (Meta API)"
+                >
+                  {budgetsLoading ? <span className="spinner" /> : <DollarSign size={16} />}
+                  Budgets
+                </button>
                 <button className="export-btn" onClick={handleExportSpend}>
                   <Download size={16} />
                   Export CSV
@@ -772,16 +963,30 @@ function App() {
 
             <section className="cards-row">
               <div className="stat-card">
-                <div className="stat-card-label">Total Spend</div>
-                <div className="stat-card-value">${totalSpend.toLocaleString()}</div>
+                <div className="stat-card-label">Budget total / jour</div>
+                <div className="stat-card-value">
+                  {totalDailyBudget != null ? `$${Number(totalDailyBudget).toLocaleString()}` : '-'}
+                </div>
                 <div className="stat-card-sub">
-                  {totalBudget ? `of $${totalBudget.toLocaleString()} budget` : 'from Meta API'}
+                  {totalDailyBudget != null && filteredSpendByAccount.length ? `sur ${filteredSpendByAccount.length} comptes` : 'Meta API'}
                 </div>
               </div>
-              <div className={`stat-card ${budgetPercent >= 90 && totalBudget ? 'alert' : 'accent'}`}>
-                <div className="stat-card-label">Budget used</div>
-                <div className="stat-card-value">{totalBudget ? `${budgetPercent}%` : '-'}</div>
-                <div className="stat-card-sub">{filteredSpendByAccount.length} accounts</div>
+              <div className="stat-card">
+                <div className="stat-card-label">Spend aujourd&apos;hui</div>
+                <div className="stat-card-value">
+                  {totalSpendToday != null ? `$${Number(totalSpendToday).toLocaleString()}` : '-'}
+                </div>
+                <div className="stat-card-sub">ce jour</div>
+              </div>
+              <div className={`stat-card ${budgetPercent >= 90 && totalDailyBudget ? 'alert' : 'accent'}`}>
+                <div className="stat-card-label">Budget jour utilisé</div>
+                <div className="stat-card-value">{totalDailyBudget ? `${budgetPercent}%` : '-'}</div>
+                <div className="stat-card-sub">spend aujourd&apos;hui / budget jour</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-card-label">Total Spend (période)</div>
+                <div className="stat-card-value">${totalSpend.toLocaleString()}</div>
+                <div className="stat-card-sub">{daysInRange != null ? `sur ${daysInRange} j` : 'période sélectionnée'}</div>
               </div>
               <div className="stat-card">
                 <div className="stat-card-label">Avg Spend / Account</div>
@@ -867,37 +1072,44 @@ function App() {
                     <thead>
                       <tr>
                         <th>Account</th>
-                        <th>Spend</th>
-                        <th>Budget</th>
+                        <th>Budget / jour</th>
+                        <th>Spend jour</th>
+                        <th>Spend période</th>
                         <th>%</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredSpendByAccount.map((row, i) => (
+                      {filteredSpendByAccount.map((row, i) => {
+                        const spendDay = spendTodayByAccount[row.account] ?? 0
+                        const dailyBud = row.dailyBudget || 0
+                        const pct = dailyBud ? Math.min((spendDay / dailyBud) * 100, 100) : 0
+                        return (
                         <tr key={row.account || `acc-${i}`}>
                           <td>
                             <span className="account-name">{row.account}</span>
                             <span className="account-meta">{(row.country || '') + (row.model ? ` · ${row.model}` : '')}</span>
                           </td>
+                          <td className="num">{row.dailyBudget ? `$${Number(row.dailyBudget).toLocaleString()}` : '-'}</td>
+                          <td className="num">{spendDay ? `$${Number(spendDay).toLocaleString()}` : '-'}</td>
                           <td className="num">${row.spend.toLocaleString()}</td>
-                          <td className="num">{row.budget ? `$${row.budget.toLocaleString()}` : '-'}</td>
                           <td>
                             <div className="progress-cell">
                               <div
-                                className={`progress-bar-track ${row.budget && (row.spend / row.budget) >= 0.9 ? 'alert' : ''}`}
+                                className={`progress-bar-track ${dailyBud && (spendDay / dailyBud) >= 0.9 ? 'alert' : ''}`}
                               >
                                 <div
                                   className="progress-fill"
-                                  style={{ width: `${row.budget ? Math.min((row.spend / row.budget) * 100, 100) : 0}%` }}
+                                  style={{ width: `${pct}%` }}
                                 />
                               </div>
                               <span className="progress-value">
-                                {row.budget ? `${Math.round((row.spend / row.budget) * 100)}%` : '-'}
+                                {dailyBud ? `${Math.round(pct)}%` : '-'}
                               </span>
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -958,6 +1170,132 @@ function App() {
                 </div>
               </section>
             )}
+          </div>
+        )}
+
+        {activeTab === 'budget' && (
+          <div className="content budget-content">
+            <section className="toolbar">
+              <div className="filters-row">
+                <div className="filter-group">
+                  <Calendar size={16} />
+                  {DATE_RANGES.map((r) => (
+                    <button
+                      key={r.id}
+                      className={`filter-chip ${dateRange === r.id ? 'active' : ''}`}
+                      onClick={() => setDateRange(r.id)}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                  {dateRange === 'custom' && (
+                    <div className="date-range-inputs">
+                      <input
+                        id="date-from-budget"
+                        name="dateFrom"
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                        max={dateTo}
+                        className="date-input"
+                      />
+                      <span className="date-sep">→</span>
+                      <input
+                        id="date-to-budget"
+                        name="dateTo"
+                        type="date"
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        min={dateFrom}
+                        max={format(new Date(), 'yyyy-MM-dd')}
+                        className="date-input"
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="filter-group">
+                  <Filter size={16} />
+                  <select id="filter-account-budget" name="filterAccount" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account">
+                    <option value="">All ad accounts</option>
+                    {accountOptions.map((a) => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                </div>
+                {dbMode && (
+                  <button
+                    className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
+                    onClick={() => handleRefreshFromMeta({ skipAds: true })}
+                    disabled={isRefreshing}
+                    title="Synchroniser campagnes + budgets (effective_status) depuis Meta"
+                  >
+                    <RefreshCw size={16} />
+                    {isRefreshing ? 'Synchro…' : 'Lancer la synchro Meta'}
+                  </button>
+                )}
+              </div>
+            </section>
+            {!dbMode ? (
+              <p className="empty-state">Connecte-toi en mode DB pour voir les budgets et lancer la synchro Meta.</p>
+            ) : budgetsList.length === 0 && !budgetsLoading ? (
+              <p className="empty-state">Aucun budget. Clique sur &quot;Lancer la synchro Meta&quot; pour récupérer les campagnes et leurs statuts (Active / Paused).</p>
+            ) : (
+              <>
+                <div className="budgets-table-wrap">
+                  <table className="winners-table">
+                    <thead>
+                      <tr>
+                        <th>Campagne</th>
+                        <th>Account</th>
+                        <th>Delivery</th>
+                        <th className="num">Budget / jour</th>
+                        <th className="num">Spend jour</th>
+                        <th className="num">Spend</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {budgetsList
+                        .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                        .sort((a, b) => (b.dailyBudget || b.lifetimeBudget / 30) - (a.dailyBudget || a.lifetimeBudget / 30))
+                        .map((b) => {
+                          const spend = spendByCampaignId[b.campaignId]
+                          const spendJour = spendTodayByCampaignId[b.campaignId]
+                          const status = (b.effectiveStatus || '').toUpperCase()
+                          const isActive = status === 'ACTIVE'
+                          const label = status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu'
+                          return (
+                            <tr key={`${b.accountId}-${b.campaignId}`}>
+                              <td><code>{b.campaignName?.slice(0, 60)}{(b.campaignName?.length || 0) > 60 ? '…' : ''}</code></td>
+                              <td>{b.accountName}</td>
+                              <td>
+                                <span className={`delivery-status delivery-${isActive ? 'active' : 'off'}`} title="Statut de diffusion (Meta)">
+                                  <span className="delivery-dot" />
+                                  {label}
+                                </span>
+                              </td>
+                              <td className="num">{b.dailyBudget ? `$${b.dailyBudget.toLocaleString()}` : '-'}</td>
+                              <td className="num">{typeof spendJour === 'number' ? `$${spendJour.toLocaleString()}` : '-'}</td>
+                              <td className="num">{typeof spend === 'number' ? `$${spend.toLocaleString()}` : '-'}</td>
+                            </tr>
+                          )
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="modal-footer-note">
+                  {(() => {
+                    const withSpend = budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                    const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE').length
+                    const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
+                    const detail = withSpend.length > 0
+                      ? ` · ${active} Active${unknown > 0 ? `, ${unknown} statut inconnu (relancer la synchro pour mettre à jour)` : ''}`
+                      : ''
+                    return `${withSpend.length} campagnes avec spend${detail}`
+                  })()}
+                </p>
+              </>
+            )}
+            {budgetsLoading && <p className="loading-inline">Chargement des budgets…</p>}
           </div>
         )}
 

@@ -15,21 +15,24 @@ export function setStoredToken(token) {
   else localStorage.removeItem(AUTH_KEY)
 }
 
-const FETCH_TIMEOUT = 30000 // 30s
+const FETCH_TIMEOUT = 30000 // 30s par défaut
+const SYNC_TIMEOUT = 300000 // 5 min pour la synchro Meta
 
 async function request(path, options = {}) {
+  const { timeout: timeoutOpt, ...fetchOptions } = options
   const token = getStoredToken()
-  const headers = { 'Content-Type': 'application/json', ...options.headers }
+  const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers }
   if (token) headers['Authorization'] = `Bearer ${token}`
   const url = `${API_BASE}${path}`
+  const timeoutMs = timeoutOpt ?? FETCH_TIMEOUT
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT)
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   let res
   try {
-    res = await fetch(url, { ...options, headers, signal: controller.signal })
+    res = await fetch(url, { ...fetchOptions, headers, signal: controller.signal })
   } catch (e) {
     clearTimeout(timeoutId)
-    const msg = e.name === 'AbortError' ? 'Requête expirée (30s). Vérifie VITE_API_URL et la connexion.' : (e.message || 'Erreur réseau')
+    const msg = e.name === 'AbortError' ? `Requête expirée (${timeoutMs / 1000}s). Vérifie VITE_API_URL et la connexion.` : (e.message || 'Erreur réseau')
     throw new Error(`${msg} — URL: ${url}`)
   }
   clearTimeout(timeoutId)
@@ -71,6 +74,7 @@ export const api = {
     return request(`/refresh${qs ? '?' + qs : ''}`, {
       method: 'POST',
       body: JSON.stringify({ accessToken: accessToken || undefined }),
+      timeout: SYNC_TIMEOUT,
     })
   },
   settings: {
@@ -91,9 +95,16 @@ export const api = {
       const q = new URLSearchParams(params).toString()
       return request(`/reports/spend${q ? `?${q}` : ''}`)
     },
+    spendToday: () => request('/reports/spend-today'),
     winners: (params = {}) => {
       const q = new URLSearchParams(params).toString()
       return request(`/reports/winners${q ? `?${q}` : ''}`)
+    },
+  },
+  campaigns: {
+    budgets: (params = {}) => {
+      const q = params.account ? `?account=${encodeURIComponent(params.account)}` : ''
+      return request(`/campaigns/budgets${q}`)
     },
   },
 }

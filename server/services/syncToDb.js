@@ -8,6 +8,7 @@ import { fetchMetaData, fetchMetaDataAllPages } from './metaApi.js'
 import { parseCampaignName } from '../utils/campaignNaming.js'
 import { extractMarketFromAccount } from '../utils/accountNaming.js'
 import * as db from '../db/spend.js'
+import * as dbBudgets from '../db/budgets.js'
 
 const FULL_SINCE = '2025-01-01'
 const FIRST_SYNC_DAYS = 30
@@ -103,6 +104,35 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       await db.insertCampaigns(syncRun.id, results)
     } else if (!winnersOnly && !incremental) {
       await db.replaceCampaigns(syncRun.id, results)
+    }
+
+    // Sync budgets (campaign level)
+    if (!winnersOnly) {
+      const budgetRows = []
+      for (const acc of accounts) {
+        try {
+          const campData = await fetchMetaDataAllPages(accessToken, `/${acc.id}/campaigns`, {
+            fields: 'id,name,daily_budget,lifetime_budget,effective_status',
+            limit: 500,
+          })
+          for (const c of campData.data || []) {
+            const dailyRaw = c.daily_budget ? parseFloat(c.daily_budget) / 100 : 0
+            const lifetimeRaw = c.lifetime_budget ? parseFloat(c.lifetime_budget) / 100 : 0
+            budgetRows.push({
+              accountId: acc.id,
+              accountName: acc.name,
+              campaignId: c.id,
+              campaignName: c.name || c.id,
+              dailyBudget: dailyRaw,
+              lifetimeBudget: lifetimeRaw,
+              effectiveStatus: c.effective_status || null,
+            })
+          }
+        } catch (e) {
+          console.warn(`Skip budgets for ${acc.name}:`, e.message)
+        }
+      }
+      if (budgetRows.length > 0) await dbBudgets.upsertBudgets(budgetRows)
     }
 
     // Sync ads_raw pour Winners (toujours si winnersOnly, sinon si !skipAds)
