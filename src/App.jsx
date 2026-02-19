@@ -42,7 +42,7 @@ import Settings from './pages/Settings'
 import { PAGE_IDS, PAGE_LABELS } from './data/members'
 import './App.css'
 
-const SPEND_TODAY_GOAL_KEY = 'vp_spend_today_goal'
+const CAMPAIGN_DAILY_GOAL_PREFIX = 'vp_campaign_daily_goal_'
 
 const SIDEBAR_SECTIONS = [
   {
@@ -112,15 +112,41 @@ function App() {
   const [budgetsLoading, setBudgetsLoading] = useState(false)
   const hasSetInitialTab = useRef(false)
 
-  const [spendTodayGoal, setSpendTodayGoal] = useState(() => {
+  const [campaignDailyGoals, setCampaignDailyGoals] = useState({})
+
+  const getCampaignDailyGoal = useCallback((campaignId, fallback = null) => {
+    if (!campaignId) return fallback
+    if (campaignDailyGoals[campaignId] != null) return campaignDailyGoals[campaignId]
     try {
-      const raw = localStorage.getItem(SPEND_TODAY_GOAL_KEY)
-      const n = raw == null ? null : Number(raw)
-      return Number.isFinite(n) ? Math.max(0, n) : null
+      const raw = localStorage.getItem(`${CAMPAIGN_DAILY_GOAL_PREFIX}${campaignId}`)
+      if (raw == null) return fallback
+      const n = Number(raw)
+      return Number.isFinite(n) ? Math.max(0, n) : fallback
     } catch {
-      return null
+      return fallback
     }
-  })
+  }, [campaignDailyGoals])
+
+  const adjustCampaignDailyGoal = useCallback((campaignId, delta, fallback = 0) => {
+    if (!campaignId) return
+    setCampaignDailyGoals((prev) => {
+      const current = prev[campaignId]
+      let base = Number.isFinite(Number(current)) ? Number(current) : null
+      if (base == null) {
+        try {
+          const raw = localStorage.getItem(`${CAMPAIGN_DAILY_GOAL_PREFIX}${campaignId}`)
+          const n = raw == null ? null : Number(raw)
+          base = Number.isFinite(n) ? n : null
+        } catch {}
+      }
+      if (base == null) base = Number(fallback) || 0
+      const next = Math.max(0, Math.round((base + delta) * 100) / 100)
+      try {
+        localStorage.setItem(`${CAMPAIGN_DAILY_GOAL_PREFIX}${campaignId}`, String(next))
+      } catch {}
+      return { ...prev, [campaignId]: next }
+    })
+  }, [])
 
   const fetchBudgets = useCallback(async () => {
     setBudgetsLoading(true)
@@ -580,28 +606,6 @@ function App() {
   const budgetPercent = totalDailyBudget && totalSpendToday != null ? Math.round((totalSpendToday / totalDailyBudget) * 100) : 0
   const { daysInRange } = spendBudgetMeta || {}
 
-  // Objectif Spend aujourd'hui (persisté en localStorage)
-  useEffect(() => {
-    if (spendTodayGoal != null) return
-    if (typeof totalSpendToday !== 'number') return
-    const guess = Math.max(0, Math.round(totalSpendToday / 10) * 10)
-    setSpendTodayGoal(guess)
-    try {
-      localStorage.setItem(SPEND_TODAY_GOAL_KEY, String(guess))
-    } catch {}
-  }, [spendTodayGoal, totalSpendToday])
-
-  const adjustSpendTodayGoal = useCallback((delta) => {
-    setSpendTodayGoal((prev) => {
-      const base = Number(prev ?? 0)
-      const next = Math.max(0, Math.round((base + delta) * 100) / 100)
-      try {
-        localStorage.setItem(SPEND_TODAY_GOAL_KEY, String(next))
-      } catch {}
-      return next
-    })
-  }, [])
-
   const handleRefreshFromMeta = async (opts = {}) => {
     if (!dbMode || !getStoredToken()) return
     setIsRefreshing(true)
@@ -767,6 +771,7 @@ function App() {
                         <th>Delivery</th>
                         <th className="num">Budget / jour</th>
                         <th className="num">Spend jour</th>
+                        <th className="num">Objectif / jour</th>
                         <th className="num">Spend</th>
                       </tr>
                     </thead>
@@ -777,6 +782,8 @@ function App() {
                         .map((b) => {
                           const spend = spendByCampaignId[b.campaignId]
                           const spendJour = spendTodayByCampaignId[b.campaignId]
+                          const dailyBud = (b.dailyBudget || (b.lifetimeBudget ? (b.lifetimeBudget / 30) : 0)) || 0
+                          const goal = getCampaignDailyGoal(b.campaignId, dailyBud)
                           const status = (b.effectiveStatus || '').toUpperCase()
                           const isActive = status === 'ACTIVE'
                           const label = status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu'
@@ -792,6 +799,13 @@ function App() {
                             </td>
                             <td className="num">{b.dailyBudget ? `$${b.dailyBudget.toLocaleString()}` : '-'}</td>
                             <td className="num">{typeof spendJour === 'number' ? `$${spendJour.toLocaleString()}` : '-'}</td>
+                            <td className="num">
+                              <span className="goal-controls" title="Objectif spend / jour (par campagne)">
+                                <button className="goal-btn" onClick={() => adjustCampaignDailyGoal(b.campaignId, -10, dailyBud)} type="button">-10$</button>
+                                <span className="goal-value">{goal != null ? `$${Number(goal).toLocaleString()}` : '-'}</span>
+                                <button className="goal-btn" onClick={() => adjustCampaignDailyGoal(b.campaignId, 10, dailyBud)} type="button">+10$</button>
+                              </span>
+                            </td>
                             <td className="num">{typeof spend === 'number' ? `$${spend.toLocaleString()}` : '-'}</td>
                           </tr>
                           )
@@ -1053,16 +1067,7 @@ function App() {
                 <div className="stat-card-value">
                   {totalSpendToday != null ? `$${Number(totalSpendToday).toLocaleString()}` : '-'}
                 </div>
-                <div className="stat-card-sub goal-row">
-                  <span>ce jour</span>
-                  <span className="goal-controls" title="Objectif Spend aujourd'hui">
-                    <button className="goal-btn" onClick={() => adjustSpendTodayGoal(-10)} type="button">-10</button>
-                    <span className="goal-value">
-                      Objectif: {spendTodayGoal != null ? `$${Number(spendTodayGoal).toLocaleString()}` : '—'}
-                    </span>
-                    <button className="goal-btn" onClick={() => adjustSpendTodayGoal(10)} type="button">+10</button>
-                  </span>
-                </div>
+                <div className="stat-card-sub">ce jour</div>
               </div>
               <div className={`stat-card ${budgetPercent >= 90 && totalDailyBudget ? 'alert' : 'accent'}`}>
                 <div className="stat-card-label">Budget jour utilisé</div>
@@ -1336,6 +1341,7 @@ function App() {
                         <th>Delivery</th>
                         <th className="num">Budget / jour</th>
                         <th className="num">Spend jour</th>
+                        <th className="num">Objectif / jour</th>
                         <th className="num">Spend</th>
                       </tr>
                     </thead>
@@ -1346,6 +1352,8 @@ function App() {
                         .map((b) => {
                           const spend = spendByCampaignId[b.campaignId]
                           const spendJour = spendTodayByCampaignId[b.campaignId]
+                          const dailyBud = (b.dailyBudget || (b.lifetimeBudget ? (b.lifetimeBudget / 30) : 0)) || 0
+                          const goal = getCampaignDailyGoal(b.campaignId, dailyBud)
                           const status = (b.effectiveStatus || '').toUpperCase()
                           const isActive = status === 'ACTIVE'
                           const label = status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu'
@@ -1361,6 +1369,13 @@ function App() {
                               </td>
                               <td className="num">{b.dailyBudget ? `$${b.dailyBudget.toLocaleString()}` : '-'}</td>
                               <td className="num">{typeof spendJour === 'number' ? `$${spendJour.toLocaleString()}` : '-'}</td>
+                              <td className="num">
+                                <span className="goal-controls" title="Objectif spend / jour (par campagne)">
+                                  <button className="goal-btn" onClick={() => adjustCampaignDailyGoal(b.campaignId, -10, dailyBud)} type="button">-10$</button>
+                                  <span className="goal-value">{goal != null ? `$${Number(goal).toLocaleString()}` : '-'}</span>
+                                  <button className="goal-btn" onClick={() => adjustCampaignDailyGoal(b.campaignId, 10, dailyBud)} type="button">+10$</button>
+                                </span>
+                              </td>
                               <td className="num">{typeof spend === 'number' ? `$${spend.toLocaleString()}` : '-'}</td>
                             </tr>
                           )
