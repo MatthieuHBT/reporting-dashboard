@@ -104,7 +104,9 @@ export const api = {
   campaigns: {
     budgets: (params = {}) => {
       const q = params.account ? `?account=${encodeURIComponent(params.account)}` : ''
-      return request(`/campaigns/budgets${q}`)
+      const path = `/campaigns/budgets${q}`
+      console.log('[api.campaigns.budgets] Calling:', API_BASE + path)
+      return request(path)
     },
   },
 }

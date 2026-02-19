@@ -16,8 +16,9 @@ export async function getBudgetsByAccount() {
   `
   const map = {}
   for (const r of rows) {
-    const key = r.account_name || r.account_id
-    if (key) map[key] = parseFloat(r.budget || 0)
+    const budget = parseFloat(r.budget || 0)
+    if (r.account_name) map[r.account_name] = budget
+    if (r.account_id) map[r.account_id] = budget
   }
   return map
 }

@@ -126,11 +126,17 @@ function App() {
   const loadBudgetsForPage = useCallback(async () => {
     if (!dbMode) return
     setBudgetsLoading(true)
+    setApiError(null)
     try {
       const data = await api.campaigns.budgets(filterAccount ? { account: filterAccount } : {})
       setBudgetsList(data.budgets || [])
     } catch (err) {
-      setApiError(err?.message)
+      const msg = err?.message || 'Erreur lors du chargement des budgets'
+      console.error('loadBudgetsForPage error:', err)
+      // Ne pas afficher l'erreur si c'est juste "Database not configured" (503) - c'est normal si DB pas configurée
+      if (!msg.includes('503') && !msg.includes('Database not configured')) {
+        setApiError(msg)
+      }
     } finally {
       setBudgetsLoading(false)
     }

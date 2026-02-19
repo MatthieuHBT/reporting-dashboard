@@ -41,6 +41,29 @@ function getDateRange(datePreset, since, until) {
   }
 }
 
+/** Enrichit une réponse spend avec les budgets Neon (si DB configurée) */
+async function enrichSpendWithBudgets(payload, range) {
+  if (!hasDb()) return
+  try {
+    const dbBudgets = await import('./db/budgets.js')
+    const budgetByAccount = await dbBudgets.getBudgetsByAccount()
+    const daysInRange = getDaysInRange(range?.since, range?.until)
+    const byAccountList = (payload.byAccount || []).map((a) => {
+      const key = a.accountName || a.accountId
+      const dailyBudget = parseFloat(budgetByAccount[key] || 0)
+      const budgetPeriod = Math.round(dailyBudget * daysInRange * 100) / 100
+      return { ...a, dailyBudget, budgetPeriod, budget: budgetPeriod }
+    })
+    const totalDailyBudget = byAccountList.reduce((s, a) => s + (a.dailyBudget || 0), 0)
+    payload.byAccount = byAccountList
+    payload.daysInRange = daysInRange
+    payload.totalDailyBudget = Math.round(totalDailyBudget * 100) / 100
+    payload.totalBudgetPeriod = Math.round(totalDailyBudget * daysInRange * 100) / 100
+  } catch (e) {
+    console.warn('enrichSpendWithBudgets:', e.message)
+  }
+}
+
 /** Nombre de jours dans la plage (since/until inclus), minimum 1 */
 function getDaysInRange(since, until) {
   if (!since || !until) return 1
@@ -325,36 +348,70 @@ app.delete('/api/users/:id', requireDbUser, requireDbAdmin, async (req, res) => 
 
 // Refresh: Meta API → DB (token: BDD > .env > body)
 app.post('/api/refresh', requireDbUser, async (req, res) => {
+  console.log('[POST /api/refresh] Début sync', {
+    hasDb: hasDb(),
+    hasEnvToken: !!process.env.META_ACCESS_TOKEN,
+    hasStoredToken: !!storedToken,
+    query: req.query,
+    bodyKeys: Object.keys(req.body || {}),
+  })
+  
   let metaToken = req.body?.accessToken || process.env.META_ACCESS_TOKEN || storedToken
   if (!metaToken && hasDb()) {
     try {
       const { getMetaToken } = await import('./db/settings.js')
       metaToken = await getMetaToken()
-    } catch {}
+      console.log('[POST /api/refresh] Token récupéré depuis BDD:', !!metaToken)
+    } catch (e) {
+      console.warn('[POST /api/refresh] Erreur récupération token BDD:', e.message)
+    }
   }
+  
   if (!metaToken) {
+    console.error('[POST /api/refresh] Aucun token Meta trouvé')
     return res.status(400).json({ error: 'Configure Meta token in Settings (admin)' })
   }
+  
   if (!hasDb()) {
+    console.error('[POST /api/refresh] Database not configured')
     return res.status(503).json({ error: 'Database not configured (DATABASE_URL)' })
   }
+  
   try {
     const forceFull = req.query.full === '1' || req.body?.full === true
     const skipAds = req.query.skipAds === '1' || req.body?.skipAds === true
     const winnersOnly = req.query.winnersOnly === '1' || req.body?.winnersOnly === true
     const winnersDays = req.query.days ? parseInt(req.query.days, 10) : null
+    
+    console.log('[POST /api/refresh] Options:', { forceFull, skipAds, winnersOnly, winnersDays })
+    
     const { runFullSync } = await import('./services/syncToDb.js')
+    console.log('[POST /api/refresh] Lancement runFullSync...')
     const result = await runFullSync(metaToken, forceFull, skipAds, winnersOnly, winnersDays)
+    console.log('[POST /api/refresh] Sync réussie:', {
+      campaignsCount: result.campaignsCount,
+      incremental: result.incremental,
+      range: result.range,
+    })
     res.json(result)
   } catch (err) {
     const msg = err?.message || err?.toString?.() || 'Refresh failed'
-    console.error('[refresh]', err)
+    console.error('[POST /api/refresh] ERREUR:', {
+      message: msg,
+      status: err?.status,
+      code: err?.code,
+      stack: err?.stack?.split('\n').slice(0, 5).join('\n'),
+    })
+    
     let hint = null
-    if (msg?.includes('timeout') || err?.code === 'ETIMEDOUT') {
+    if (msg?.includes('timeout') || err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET') {
       hint = 'Sync trop longue (timeout). Essaie un sync rapide (Sync rapide) ou winners only.'
     } else if (err?.status === 401 || /invalid|expired|190|access token/i.test(msg)) {
       hint = 'Token Meta expiré ou invalide. Va dans Settings → Tester le token, puis génère un nouveau token dans Graph API Explorer.'
+    } else if (err?.code === 'ENOTFOUND' || err?.code === 'ECONNREFUSED') {
+      hint = 'Erreur de connexion réseau. Vérifie la connexion internet et que Meta API est accessible.'
     }
+    
     if (!res.headersSent) {
       res.status(500).json({ error: msg, hint })
     }
@@ -554,14 +611,16 @@ app.get('/api/reports/spend', async (req, res) => {
         byMarket[mktKey].spend += r.spend || 0
         byMarket[mktKey].market = mktKey
       }
-      return res.json({
+      const payload = {
         campaigns: filteredCampaigns,
         byAccount: Object.values(byAccount),
         byProduct: Object.values(byProduct),
         byMarket: Object.values(byMarket),
         totalSpend: filteredCampaigns.reduce((s, r) => s + (r.spend || 0), 0),
         accounts: allAccounts,
-      })
+      }
+      await enrichSpendWithBudgets(payload, range)
+      return res.json(payload)
     } catch (e) {
       return res.status(500).json({ error: 'Failed to read spend data' })
     }
@@ -652,14 +711,17 @@ async function fetchSpendFromApi(req, res) {
     }
 
     const allAccountNames = (data.data || []).map((a) => a.name).filter(Boolean)
-    res.json({
+    const range = getDateRange(req.query.datePreset, req.query.since, req.query.until)
+    const payload = {
       campaigns: filtered,
       byAccount: Object.values(byAccount),
       byProduct: Object.values(byProduct),
       byMarket: Object.values(byMarket),
       accounts: allAccountNames,
       totalSpend: filtered.reduce((s, r) => s + r.spend, 0)
-    })
+    }
+    await enrichSpendWithBudgets(payload, range)
+    res.json(payload)
   } catch (err) {
     console.error(err)
     res.status(err.status || 500).json({ error: err.message || 'Failed to fetch spend' })
@@ -879,12 +941,15 @@ async function fetchWinnersFromApi(req, res) {
 
 // Budgets campagnes
 app.get('/api/campaigns/budgets', async (req, res) => {
+  console.log('[GET /api/campaigns/budgets]', { account: req.query.account, hasDb: hasDb() })
   if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
   try {
     const dbBudgets = await import('./db/budgets.js')
     const list = await dbBudgets.listCampaignBudgets(req.query.account || null)
+    console.log('[GET /api/campaigns/budgets] OK:', list.length, 'budgets')
     res.json({ budgets: list })
   } catch (err) {
+    console.error('[GET /api/campaigns/budgets] Error:', err)
     res.status(500).json({ error: err.message })
   }
 })
