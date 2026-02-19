@@ -31,6 +31,8 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
   let since = FULL_SINCE
   let until = today()
   let incremental = false
+  let alreadyUpToDate = false
+  let skipCampaignsSync = false
 
   if (winnersOnly) {
     const days = winnersDays ?? WINNERS_MAX_DAYS
@@ -43,8 +45,12 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       const lastUntil = typeof lastUntilVal === 'string' ? lastUntilVal : lastUntilVal?.toISOString?.()?.slice(0, 10)
       const nextSince = addDays(lastUntil, 1)
       if (nextSince > until) {
-        console.log('[runFullSync] Déjà à jour')
-        return { success: true, campaignsCount: 0, syncedAt: new Date().toISOString(), incremental: false, range: { since, until }, alreadyUpToDate: true }
+        alreadyUpToDate = true
+        skipCampaignsSync = true
+        // Plage minimale pour éviter des appels inutiles, tout en permettant la sync budgets.
+        since = until
+        incremental = false
+        console.log('[runFullSync] Déjà à jour (campaigns). On sync quand même les budgets.', { since, until })
       }
       if (nextSince <= until) {
         since = nextSince
@@ -76,7 +82,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     let budgetRows = []
     let adsRaw = []
 
-    if (!winnersOnly) {
+    if (!winnersOnly && !skipCampaignsSync) {
     console.log('[runFullSync] Sync campaigns pour', accounts.length, 'accounts...')
     for (const acc of accounts) {
       try {
@@ -113,6 +119,8 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
         console.warn(`Skip account ${acc.name}:`, e.message)
       }
     }
+    } else if (!winnersOnly && skipCampaignsSync) {
+      console.log('[runFullSync] Skip sync campaigns (déjà à jour).')
     }
 
     if (!winnersOnly && incremental && results.length > 0) {
@@ -224,6 +232,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       winnersOnly,
       syncedAt: new Date().toISOString(),
       incremental,
+      alreadyUpToDate,
       range: { since, until },
     }
   } catch (err) {
