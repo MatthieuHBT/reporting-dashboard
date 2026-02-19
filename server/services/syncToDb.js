@@ -123,11 +123,14 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       console.log('[runFullSync] Skip sync campaigns (déjà à jour).')
     }
 
-    if (!winnersOnly && incremental && results.length > 0) {
-      await db.deleteCampaignsFromDate(since)
-      await db.insertCampaigns(syncRun.id, results)
-    } else if (!winnersOnly && !incremental) {
-      await db.replaceCampaigns(syncRun.id, results)
+    // Écrire les campagnes seulement si on les a réellement sync (sinon, on risque d'écraser avec [])
+    if (!winnersOnly && !skipCampaignsSync) {
+      if (incremental && results.length > 0) {
+        await db.deleteCampaignsFromDate(since)
+        await db.insertCampaigns(syncRun.id, results)
+      } else if (!incremental) {
+        await db.replaceCampaigns(syncRun.id, results)
+      }
     }
 
     // Sync budgets (campaign level)
