@@ -47,6 +47,7 @@ async function enrichSpendWithBudgets(payload, range) {
   try {
     const dbBudgets = await import('./db/budgets.js')
     const budgetByAccount = await dbBudgets.getBudgetsByAccount()
+    const totalDailyBudgetAll = await dbBudgets.getTotalDailyBudget()
     const daysInRange = getDaysInRange(range?.since, range?.until)
     const byAccountList = (payload.byAccount || []).map((a) => {
       const key = a.accountName || a.accountId
@@ -54,11 +55,10 @@ async function enrichSpendWithBudgets(payload, range) {
       const budgetPeriod = Math.round(dailyBudget * daysInRange * 100) / 100
       return { ...a, dailyBudget, budgetPeriod, budget: budgetPeriod }
     })
-    const totalDailyBudget = byAccountList.reduce((s, a) => s + (a.dailyBudget || 0), 0)
     payload.byAccount = byAccountList
     payload.daysInRange = daysInRange
-    payload.totalDailyBudget = Math.round(totalDailyBudget * 100) / 100
-    payload.totalBudgetPeriod = Math.round(totalDailyBudget * daysInRange * 100) / 100
+    payload.totalDailyBudget = Math.round((totalDailyBudgetAll || 0) * 100) / 100
+    payload.totalBudgetPeriod = Math.round((totalDailyBudgetAll || 0) * daysInRange * 100) / 100
   } catch (e) {
     console.warn('enrichSpendWithBudgets:', e.message)
   }
@@ -551,8 +551,12 @@ app.get('/api/reports/spend', async (req, res) => {
           budget: budgetPeriod,
         }
       })
-      const totalDailyBudget = byAccountList.reduce((s, a) => s + (a.dailyBudget || 0), 0)
-      const totalBudgetPeriod = Math.round(totalDailyBudget * daysInRange * 100) / 100
+      let totalDailyBudgetAll = 0
+      try {
+        const dbBudgets = await import('./db/budgets.js')
+        totalDailyBudgetAll = await dbBudgets.getTotalDailyBudget()
+      } catch (_) {}
+      const totalBudgetPeriod = Math.round((totalDailyBudgetAll || 0) * daysInRange * 100) / 100
       return res.json({
         campaigns: filteredCampaigns,
         byAccount: byAccountList,
@@ -561,7 +565,7 @@ app.get('/api/reports/spend', async (req, res) => {
         totalSpend: filteredCampaigns.reduce((s, r) => s + (r.spend || 0), 0),
         accounts: allAccounts,
         daysInRange,
-        totalDailyBudget: Math.round(totalDailyBudget * 100) / 100,
+        totalDailyBudget: Math.round((totalDailyBudgetAll || 0) * 100) / 100,
         totalBudgetPeriod,
       })
     } catch (err) {

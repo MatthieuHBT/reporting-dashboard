@@ -51,6 +51,18 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
         since = until
         incremental = false
         console.log('[runFullSync] Déjà à jour (campaigns). On sync quand même les budgets.', { since, until })
+        // Si la table campaigns est vide (ou a été vidée), on force une resync "first sync" (30j)
+        try {
+          const todayCount = await db.countCampaigns(until, until)
+          if (!todayCount) {
+            skipCampaignsSync = false
+            since = addDays(until, -FIRST_SYNC_DAYS)
+            incremental = false
+            console.log('[runFullSync] campaigns vide → force resync', { since, until })
+          }
+        } catch (e) {
+          console.warn('[runFullSync] countCampaigns failed:', e.message)
+        }
       }
       if (nextSince <= until) {
         since = nextSince

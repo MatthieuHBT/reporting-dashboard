@@ -420,6 +420,24 @@ function App() {
         },
       }
     }
+    // Si on a une réponse spend mais 0 campagnes (DB vide / plage vide), afficher quand même les budgets meta
+    if (spendData) {
+      return {
+        filteredSpendByAccount: [],
+        filteredSpendByProduct: [],
+        spendByMarket: [],
+        spendTrend: [],
+        allProducts: [],
+        allMarkets: [],
+        allAccounts: spendData.accounts?.length ? spendData.accounts : [],
+        rawCampaigns: [],
+        spendBudgetMeta: {
+          daysInRange: spendData.daysInRange,
+          totalDailyBudget: spendData.totalDailyBudget,
+          totalBudgetPeriod: spendData.totalBudgetPeriod,
+        },
+      }
+    }
     // Pas de données inventées — uniquement Meta/DB
     return {
       filteredSpendByAccount: [],

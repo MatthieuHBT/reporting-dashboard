@@ -23,6 +23,17 @@ export async function getLatestSyncRun() {
   return rows[0] || null
 }
 
+export async function countCampaigns(since = null, until = null) {
+  guard()
+  let rows
+  if (since && until) {
+    rows = await sql`SELECT COUNT(*)::int AS count FROM campaigns WHERE date >= ${since} AND date <= ${until}`
+  } else {
+    rows = await sql`SELECT COUNT(*)::int AS count FROM campaigns`
+  }
+  return rows?.[0]?.count ?? 0
+}
+
 export async function getCampaigns(since, until, accountName = null) {
   guard()
   // accountName = filtre "market" : on garde les campagnes dont le NOM indique ce market (CBO_MX_, CBO_IT_, etc.)

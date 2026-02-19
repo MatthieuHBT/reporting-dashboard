@@ -23,6 +23,16 @@ export async function getBudgetsByAccount() {
   return map
 }
 
+export async function getTotalDailyBudget() {
+  guard()
+  const rows = await sql`
+    SELECT SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) AS total
+    FROM campaign_budgets
+    WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
+  `
+  return parseFloat(rows?.[0]?.total || 0)
+}
+
 /** Liste les budgets campagnes actives uniquement */
 export async function listCampaignBudgets(accountName = null) {
   guard()
