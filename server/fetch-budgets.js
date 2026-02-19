@@ -43,6 +43,7 @@ async function run() {
           campaignName: c.name || c.id,
           dailyBudget: dailyRaw,
           lifetimeBudget: lifetimeRaw,
+          hasActiveAds: null,
         })
       }
       console.log(`  ${acc.name}: ${(campData.data || []).length} campagnes`)

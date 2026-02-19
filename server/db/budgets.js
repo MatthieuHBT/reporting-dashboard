@@ -12,6 +12,7 @@ export async function getBudgetsByAccount() {
            SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) as budget
     FROM campaign_budgets
     WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
+      AND (has_active_ads IS NULL OR has_active_ads = TRUE)
     GROUP BY account_id, account_name
   `
   const map = {}
@@ -29,6 +30,7 @@ export async function getTotalDailyBudget() {
     SELECT SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) AS total
     FROM campaign_budgets
     WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
+      AND (has_active_ads IS NULL OR has_active_ads = TRUE)
   `
   return parseFloat(rows?.[0]?.total || 0)
 }
@@ -58,6 +60,7 @@ export async function listCampaignBudgets(accountName = null) {
     dailyBudget: parseFloat(r.daily_budget || 0),
     lifetimeBudget: parseFloat(r.lifetime_budget || 0),
     effectiveStatus: r.effective_status || null,
+    hasActiveAds: r.has_active_ads === null || r.has_active_ads === undefined ? null : !!r.has_active_ads,
     updatedAt: r.updated_at?.toISOString?.(),
   }))
 }
@@ -66,13 +69,14 @@ export async function upsertBudgets(budgets) {
   guard()
   for (const b of budgets) {
     await sql`
-      INSERT INTO campaign_budgets (account_id, account_name, campaign_id, campaign_name, daily_budget, lifetime_budget, effective_status, updated_at)
-      VALUES (${b.accountId}, ${b.accountName}, ${b.campaignId}, ${b.campaignName}, ${b.dailyBudget || 0}, ${b.lifetimeBudget || 0}, ${b.effectiveStatus || null}, NOW())
+      INSERT INTO campaign_budgets (account_id, account_name, campaign_id, campaign_name, daily_budget, lifetime_budget, effective_status, has_active_ads, updated_at)
+      VALUES (${b.accountId}, ${b.accountName}, ${b.campaignId}, ${b.campaignName}, ${b.dailyBudget || 0}, ${b.lifetimeBudget || 0}, ${b.effectiveStatus || null}, ${b.hasActiveAds ?? null}, NOW())
       ON CONFLICT (account_id, campaign_id) DO UPDATE SET
         campaign_name = EXCLUDED.campaign_name,
         daily_budget = EXCLUDED.daily_budget,
         lifetime_budget = EXCLUDED.lifetime_budget,
         effective_status = EXCLUDED.effective_status,
+        has_active_ads = EXCLUDED.has_active_ads,
         updated_at = NOW()
     `
   }

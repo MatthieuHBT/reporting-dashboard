@@ -152,6 +152,17 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       for (const acc of accounts) {
         try {
           console.log(`[runFullSync] Budgets pour ${acc.name}...`)
+          let activeCampaignIds = null
+          try {
+            const activeAds = await fetchMetaDataAllPages(accessToken, `/${acc.id}/ads`, {
+              fields: 'id,campaign_id,effective_status',
+              effective_status: JSON.stringify(['ACTIVE']),
+              limit: 500,
+            })
+            activeCampaignIds = new Set((activeAds.data || []).map((a) => a.campaign_id).filter(Boolean))
+          } catch (e) {
+            console.warn(`Skip active ads check for ${acc.name}:`, e.message)
+          }
           const campData = await fetchMetaDataAllPages(accessToken, `/${acc.id}/campaigns`, {
             fields: 'id,name,daily_budget,lifetime_budget,effective_status',
             limit: 500,
@@ -168,6 +179,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
               dailyBudget: dailyRaw,
               lifetimeBudget: lifetimeRaw,
               effectiveStatus: c.effective_status || null,
+              hasActiveAds: activeCampaignIds ? activeCampaignIds.has(c.id) : null,
             })
           }
         } catch (e) {

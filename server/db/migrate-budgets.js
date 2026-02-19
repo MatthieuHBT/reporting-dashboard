@@ -29,11 +29,13 @@ await sql`
     daily_budget DECIMAL(12, 2) DEFAULT 0,
     lifetime_budget DECIMAL(12, 2) DEFAULT 0,
     effective_status VARCHAR(50),
+    has_active_ads BOOLEAN,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (account_id, campaign_id)
   )
 `
   await sql`ALTER TABLE campaign_budgets ADD COLUMN IF NOT EXISTS effective_status VARCHAR(50)`
+  await sql`ALTER TABLE campaign_budgets ADD COLUMN IF NOT EXISTS has_active_ads BOOLEAN`
   console.log('✓ Table campaign_budgets créée')
 } catch (err) {
   console.error('Erreur migration:', err.message)

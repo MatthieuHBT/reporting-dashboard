@@ -785,8 +785,9 @@ function App() {
                           const dailyBud = (b.dailyBudget || (b.lifetimeBudget ? (b.lifetimeBudget / 30) : 0)) || 0
                           const goal = getCampaignDailyGoal(b.campaignId, dailyBud)
                           const status = (b.effectiveStatus || '').toUpperCase()
-                          const isActive = status === 'ACTIVE'
-                          const label = status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu'
+                          const adsOff = b.hasActiveAds === false
+                          const isActive = status === 'ACTIVE' && !adsOff
+                          const label = adsOff ? 'Ads off' : (status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu')
                           return (
                           <tr key={`${b.accountId}-${b.campaignId}`}>
                             <td><code>{b.campaignName?.slice(0, 60)}{(b.campaignName?.length || 0) > 60 ? '…' : ''}</code></td>
@@ -816,10 +817,11 @@ function App() {
                   <p className="modal-footer-note">
                     {(() => {
                       const withSpend = budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
-                      const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE').length
+                      const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE' && b.hasActiveAds !== false).length
+                      const adsOff = withSpend.filter((b) => b.hasActiveAds === false).length
                       const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
                       const detail = withSpend.length > 0
-                        ? ` · ${active} Active${unknown > 0 ? `, ${unknown} statut inconnu (relancer un sync Meta pour mettre à jour)` : ''}`
+                        ? ` · ${active} Active${adsOff > 0 ? `, ${adsOff} Ads off` : ''}${unknown > 0 ? `, ${unknown} statut inconnu (relancer un sync Meta pour mettre à jour)` : ''}`
                         : ''
                       return `${withSpend.length} campagnes avec spend${detail}`
                     })()}
@@ -1355,8 +1357,9 @@ function App() {
                           const dailyBud = (b.dailyBudget || (b.lifetimeBudget ? (b.lifetimeBudget / 30) : 0)) || 0
                           const goal = getCampaignDailyGoal(b.campaignId, dailyBud)
                           const status = (b.effectiveStatus || '').toUpperCase()
-                          const isActive = status === 'ACTIVE'
-                          const label = status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu'
+                          const adsOff = b.hasActiveAds === false
+                          const isActive = status === 'ACTIVE' && !adsOff
+                          const label = adsOff ? 'Ads off' : (status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu')
                           return (
                             <tr key={`${b.accountId}-${b.campaignId}`}>
                               <td><code>{b.campaignName?.slice(0, 60)}{(b.campaignName?.length || 0) > 60 ? '…' : ''}</code></td>
@@ -1386,10 +1389,11 @@ function App() {
                 <p className="modal-footer-note">
                   {(() => {
                     const withSpend = budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
-                    const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE').length
+                    const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE' && b.hasActiveAds !== false).length
+                    const adsOff = withSpend.filter((b) => b.hasActiveAds === false).length
                     const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
                     const detail = withSpend.length > 0
-                      ? ` · ${active} Active${unknown > 0 ? `, ${unknown} statut inconnu (relancer la synchro pour mettre à jour)` : ''}`
+                      ? ` · ${active} Active${adsOff > 0 ? `, ${adsOff} Ads off` : ''}${unknown > 0 ? `, ${unknown} statut inconnu (relancer la synchro pour mettre à jour)` : ''}`
                       : ''
                     return `${withSpend.length} campagnes avec spend${detail}`
                   })()}
