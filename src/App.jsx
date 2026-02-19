@@ -541,23 +541,42 @@ function App() {
   )
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const { spendTodayByAccount, totalSpendToday } = useMemo(() => {
-    if (spendTodayData?.byAccount != null) {
-      return {
-        spendTodayByAccount: spendTodayData.byAccount,
-        totalSpendToday: spendTodayData.totalSpendToday ?? 0,
+    const selectedMkt = filterAccount ? (extractMarketFromAccountName(filterAccount) || '').toUpperCase() : ''
+    const getProductKey = (c) => c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
+
+    const isIncluded = (c) => {
+      if (!c) return false
+      if (filterProduct && getProductKey(c) !== filterProduct) return false
+      if (filterModel && extractModel(c.accountName || '') !== filterModel) return false
+      if (selectedMkt) {
+        const code = String(c.codeCountry || parseAdName(c.campaignName || '').codeCountry || '').toUpperCase()
+        if (!code || code !== selectedMkt) return false
       }
+      return true
     }
+
+    const rows = Array.isArray(spendTodayData?.campaigns)
+      ? spendTodayData.campaigns
+      : (spendData?.campaigns || []).filter((c) => c.date === todayStr)
+
     const byAccount = {}
     let total = 0
-    for (const c of spendData?.campaigns || []) {
-      if (c.date !== todayStr) continue
+    for (const c of rows) {
+      if (!isIncluded(c)) continue
       const key = c.accountName || c.accountId
       byAccount[key] = (byAccount[key] || 0) + (c.spend || 0)
       total += c.spend || 0
     }
     return { spendTodayByAccount: byAccount, totalSpendToday: Math.round(total * 100) / 100 }
-  }, [spendTodayData, spendData?.campaigns, todayStr])
-  const totalDailyBudget = spendBudgetMeta?.totalDailyBudget
+  }, [spendTodayData?.campaigns, spendData?.campaigns, todayStr, filterAccount, filterProduct, filterModel])
+
+  const totalDailyBudget = useMemo(() => {
+    if (filteredSpendByAccount.length) {
+      return filteredSpendByAccount.reduce((s, a) => s + (a.dailyBudget || 0), 0)
+    }
+    return spendBudgetMeta?.totalDailyBudget
+  }, [filteredSpendByAccount, spendBudgetMeta?.totalDailyBudget])
+
   const budgetPercent = totalDailyBudget && totalSpendToday != null ? Math.round((totalSpendToday / totalDailyBudget) * 100) : 0
   const { daysInRange } = spendBudgetMeta || {}
 
