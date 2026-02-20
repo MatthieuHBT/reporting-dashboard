@@ -73,7 +73,10 @@ export const api = {
     const qs = params.toString()
     return request(`/refresh${qs ? '?' + qs : ''}`, {
       method: 'POST',
-      body: JSON.stringify({ accessToken: accessToken || undefined }),
+      body: JSON.stringify({
+        accessToken: accessToken || undefined,
+        accounts: Array.isArray(opts.accounts) && opts.accounts.length ? opts.accounts : undefined,
+      }),
       timeout: SYNC_TIMEOUT,
     })
   },

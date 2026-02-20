@@ -1074,7 +1074,7 @@ function App() {
                 </>
               )}
               {activeTab === 'winners' && dbMode && (
-                <button onClick={() => handleRefreshFromMeta({ winnersOnly: true })}>
+                <button onClick={() => handleRefreshFromMeta({ winnersOnly: true, accounts: filterAccount })}>
                   Réessayer Sync Winners
                 </button>
               )}
@@ -1585,7 +1585,7 @@ function App() {
                   {dbMode && (
                     <button
                       className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
-                      onClick={() => handleRefreshFromMeta({ winnersOnly: true })}
+                      onClick={() => handleRefreshFromMeta({ winnersOnly: true, accounts: filterAccount })}
                       disabled={isRefreshing}
                       title="Synchroniser les Winners depuis Meta"
                     >

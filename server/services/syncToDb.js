@@ -26,7 +26,7 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10)
 }
 
-export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false, winnersDays = null) {
+export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false, winnersDays = null, accountNames = null) {
   console.log('[runFullSync] Début', { forceFull, skipAds, winnersOnly, winnersDays })
   
   let since = FULL_SINCE
@@ -90,7 +90,13 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       fields: 'id,name',
       limit: 500,
     })
-    const accounts = data.data || []
+    let accounts = data.data || []
+    if (Array.isArray(accountNames) && accountNames.length) {
+      const wanted = new Set(accountNames.map(String))
+      const before = accounts.length
+      accounts = accounts.filter((a) => wanted.has(String(a.name)))
+      console.log('[runFullSync] Filtre ad accounts:', { before, after: accounts.length })
+    }
     console.log('[runFullSync]', accounts.length, 'ad accounts trouvés')
     const results = []
     let budgetRows = []

@@ -382,12 +382,13 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
     const skipAds = req.query.skipAds === '1' || req.body?.skipAds === true
     const winnersOnly = req.query.winnersOnly === '1' || req.body?.winnersOnly === true
     const winnersDays = req.query.days ? parseInt(req.query.days, 10) : null
+    const accounts = Array.isArray(req.body?.accounts) ? req.body.accounts.filter(Boolean) : null
     
-    console.log('[POST /api/refresh] Options:', { forceFull, skipAds, winnersOnly, winnersDays })
+    console.log('[POST /api/refresh] Options:', { forceFull, skipAds, winnersOnly, winnersDays, accountsCount: accounts?.length || 0 })
     
     const { runFullSync } = await import('./services/syncToDb.js')
     console.log('[POST /api/refresh] Lancement runFullSync...')
-    const result = await runFullSync(metaToken, forceFull, skipAds, winnersOnly, winnersDays)
+    const result = await runFullSync(metaToken, forceFull, skipAds, winnersOnly, winnersDays, accounts)
     console.log('[POST /api/refresh] Sync réussie:', {
       campaignsCount: result.campaignsCount,
       incremental: result.incremental,
