@@ -7,14 +7,26 @@ function guard() {
 /** Récupère les budgets par account (campagnes ACTIVE uniquement, pour le budget total / jour) */
 export async function getBudgetsByAccount() {
   guard()
-  const rows = await sql`
-    SELECT account_id, account_name,
-           SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) as budget
-    FROM campaign_budgets
-    WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
-      AND (has_active_ads IS NULL OR has_active_ads = TRUE)
-    GROUP BY account_id, account_name
-  `
+  let rows
+  try {
+    rows = await sql`
+      SELECT account_id, account_name,
+             SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) as budget
+      FROM campaign_budgets
+      WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
+        AND (has_active_ads IS NULL OR has_active_ads = TRUE)
+      GROUP BY account_id, account_name
+    `
+  } catch (e) {
+    if (!String(e?.message || '').includes('has_active_ads')) throw e
+    rows = await sql`
+      SELECT account_id, account_name,
+             SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) as budget
+      FROM campaign_budgets
+      WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
+      GROUP BY account_id, account_name
+    `
+  }
   const map = {}
   for (const r of rows) {
     const budget = parseFloat(r.budget || 0)
@@ -26,12 +38,22 @@ export async function getBudgetsByAccount() {
 
 export async function getTotalDailyBudget() {
   guard()
-  const rows = await sql`
-    SELECT SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) AS total
-    FROM campaign_budgets
-    WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
-      AND (has_active_ads IS NULL OR has_active_ads = TRUE)
-  `
+  let rows
+  try {
+    rows = await sql`
+      SELECT SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) AS total
+      FROM campaign_budgets
+      WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
+        AND (has_active_ads IS NULL OR has_active_ads = TRUE)
+    `
+  } catch (e) {
+    if (!String(e?.message || '').includes('has_active_ads')) throw e
+    rows = await sql`
+      SELECT SUM(COALESCE(NULLIF(daily_budget, 0), lifetime_budget / 30)) AS total
+      FROM campaign_budgets
+      WHERE (effective_status = 'ACTIVE' OR effective_status IS NULL)
+    `
+  }
   return parseFloat(rows?.[0]?.total || 0)
 }
 
@@ -68,16 +90,30 @@ export async function listCampaignBudgets(accountName = null) {
 export async function upsertBudgets(budgets) {
   guard()
   for (const b of budgets) {
-    await sql`
-      INSERT INTO campaign_budgets (account_id, account_name, campaign_id, campaign_name, daily_budget, lifetime_budget, effective_status, has_active_ads, updated_at)
-      VALUES (${b.accountId}, ${b.accountName}, ${b.campaignId}, ${b.campaignName}, ${b.dailyBudget || 0}, ${b.lifetimeBudget || 0}, ${b.effectiveStatus || null}, ${b.hasActiveAds ?? null}, NOW())
-      ON CONFLICT (account_id, campaign_id) DO UPDATE SET
-        campaign_name = EXCLUDED.campaign_name,
-        daily_budget = EXCLUDED.daily_budget,
-        lifetime_budget = EXCLUDED.lifetime_budget,
-        effective_status = EXCLUDED.effective_status,
-        has_active_ads = EXCLUDED.has_active_ads,
-        updated_at = NOW()
-    `
+    try {
+      await sql`
+        INSERT INTO campaign_budgets (account_id, account_name, campaign_id, campaign_name, daily_budget, lifetime_budget, effective_status, has_active_ads, updated_at)
+        VALUES (${b.accountId}, ${b.accountName}, ${b.campaignId}, ${b.campaignName}, ${b.dailyBudget || 0}, ${b.lifetimeBudget || 0}, ${b.effectiveStatus || null}, ${b.hasActiveAds ?? null}, NOW())
+        ON CONFLICT (account_id, campaign_id) DO UPDATE SET
+          campaign_name = EXCLUDED.campaign_name,
+          daily_budget = EXCLUDED.daily_budget,
+          lifetime_budget = EXCLUDED.lifetime_budget,
+          effective_status = EXCLUDED.effective_status,
+          has_active_ads = EXCLUDED.has_active_ads,
+          updated_at = NOW()
+      `
+    } catch (e) {
+      if (!String(e?.message || '').includes('has_active_ads')) throw e
+      await sql`
+        INSERT INTO campaign_budgets (account_id, account_name, campaign_id, campaign_name, daily_budget, lifetime_budget, effective_status, updated_at)
+        VALUES (${b.accountId}, ${b.accountName}, ${b.campaignId}, ${b.campaignName}, ${b.dailyBudget || 0}, ${b.lifetimeBudget || 0}, ${b.effectiveStatus || null}, NOW())
+        ON CONFLICT (account_id, campaign_id) DO UPDATE SET
+          campaign_name = EXCLUDED.campaign_name,
+          daily_budget = EXCLUDED.daily_budget,
+          lifetime_budget = EXCLUDED.lifetime_budget,
+          effective_status = EXCLUDED.effective_status,
+          updated_at = NOW()
+      `
+    }
   }
 }
