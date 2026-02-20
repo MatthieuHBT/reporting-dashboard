@@ -1074,7 +1074,16 @@ function App() {
                 </>
               )}
               {activeTab === 'winners' && dbMode && (
-                <button onClick={() => handleRefreshFromMeta({ winnersOnly: true, accounts: filterAccount })}>
+                <button onClick={() => handleRefreshFromMeta({
+                  winnersOnly: true,
+                  accounts: filterAccount,
+                  winnersFilters: {
+                    minSpend: winnersMinSpend,
+                    minRoas: winnersMinRoas,
+                    markets: filterMarket,
+                    products: filterProduct,
+                  },
+                })}>
                   Réessayer Sync Winners
                 </button>
               )}
@@ -1585,7 +1594,16 @@ function App() {
                   {dbMode && (
                     <button
                       className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
-                      onClick={() => handleRefreshFromMeta({ winnersOnly: true, accounts: filterAccount })}
+                      onClick={() => handleRefreshFromMeta({
+                        winnersOnly: true,
+                        accounts: filterAccount,
+                        winnersFilters: {
+                          minSpend: winnersMinSpend,
+                          minRoas: winnersMinRoas,
+                          markets: filterMarket,
+                          products: filterProduct,
+                        },
+                      })}
                       disabled={isRefreshing}
                       title="Synchroniser les Winners depuis Meta"
                     >

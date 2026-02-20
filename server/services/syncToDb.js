@@ -26,7 +26,7 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10)
 }
 
-export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false, winnersDays = null, accountNames = null) {
+export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false, winnersDays = null, accountNames = null, winnersFilters = null) {
   console.log('[runFullSync] Début', { forceFull, skipAds, winnersOnly, winnersDays })
   
   let since = FULL_SINCE
@@ -200,6 +200,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     // Sync ads_raw pour Winners (toujours si winnersOnly, sinon si !skipAds)
     if (winnersOnly || !skipAds) {
     console.log('[runFullSync] Sync ads_raw (winners)...')
+    const { parseAdName } = await import('../utils/parseAdNaming.js')
     const insightsParams = {
       fields: 'ad_name,ad_id,spend,impressions,clicks,actions,action_values',
       level: 'ad',
@@ -207,6 +208,18 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       time_range: timeRange,
     }
     adsRaw = []
+    const minSpend = winnersFilters?.minSpend != null ? Number(winnersFilters.minSpend) || 0 : 0
+    const minRoas = winnersFilters?.minRoas != null ? Number(winnersFilters.minRoas) || 0 : 0
+    const marketSet = Array.isArray(winnersFilters?.markets) && winnersFilters.markets.length
+      ? new Set(winnersFilters.markets.map((m) => String(m).toUpperCase()))
+      : null
+    const productSet = Array.isArray(winnersFilters?.products) && winnersFilters.products.length
+      ? new Set(winnersFilters.products.map((p) => String(p)))
+      : null
+    const normalizeProductName = (name) => String(name || '')
+      .replace(/\s+PDP(\s+PDP)*\s*$/i, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
     for (const acc of accounts) {
       try {
         console.log(`[runFullSync] Winners pour ${acc.name}...`)
@@ -236,13 +249,22 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
             )
             if (purchase?.value) purchaseValue = parseFloat(purchase.value)
           }
+          const spend = parseFloat(a.spend || 0)
+          if (minSpend > 0 && spend < minSpend) continue
+          const roas = spend > 0 ? (purchaseValue / spend) : null
+          if (minRoas > 0 && (roas == null || roas < minRoas)) continue
+          if (marketSet || productSet) {
+            const parsed = parseAdName(a.ad_name || a.ad_id || '-')
+            if (marketSet && !marketSet.has(String(parsed.codeCountry || '-').toUpperCase())) continue
+            if (productSet && !productSet.has(normalizeProductName(parsed.productName || 'Other'))) continue
+          }
           adsRaw.push({
             adId: a.ad_id,
             adName: a.ad_name || a.ad_id || '-',
             accountId: acc.id,
             accountName: acc.name,
             date: a.date_start || a.date_stop || null,
-            spend: parseFloat(a.spend || 0),
+            spend,
             impressions: parseInt(a.impressions || 0, 10),
             clicks: parseInt(a.clicks || 0, 10),
             purchaseValue,
