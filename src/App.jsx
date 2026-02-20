@@ -101,10 +101,10 @@ function App() {
   const [dateRange, setDateRange] = useState('full')
   const [dateFrom, setDateFrom] = useState(format(subDays(new Date(), 29), 'yyyy-MM-dd'))
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'))
-  const [filterProduct, setFilterProduct] = useState('')
+  const [filterProduct, setFilterProduct] = useState([]) // multi-select
   const [filterModel, setFilterModel] = useState('')
-  const [filterMarket, setFilterMarket] = useState('')
-  const [filterAccount, setFilterAccount] = useState('')
+  const [filterMarket, setFilterMarket] = useState([]) // multi-select
+  const [filterAccount, setFilterAccount] = useState([]) // multi-select
   const [winnersSortBy, setWinnersSortBy] = useState('spend')
   const [winnersSortDir, setWinnersSortDir] = useState('desc') // desc = meilleur en premier
   const [winnersMinSpend, setWinnersMinSpend] = useState(0)
@@ -120,6 +120,59 @@ function App() {
   const [budgetsList, setBudgetsList] = useState([])
   const [budgetsLoading, setBudgetsLoading] = useState(false)
   const hasSetInitialTab = useRef(false)
+
+  const toggleMultiValue = useCallback((setFn, value) => {
+    setFn((prev) => {
+      const list = Array.isArray(prev) ? prev : []
+      return list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
+    })
+  }, [])
+
+  const MultiSelect = ({ id, title, options, selected, onChange, placeholder }) => {
+    const list = Array.isArray(selected) ? selected : []
+    return (
+      <details className="multi-select" id={id}>
+        <summary title={title}>
+          {list.length ? `${title} (${list.length})` : placeholder}
+        </summary>
+        <div className="multi-select-menu" onClick={(e) => e.stopPropagation()}>
+          <div className="multi-select-actions">
+            <button
+              type="button"
+              className="multi-action-btn"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange([...options]) }}
+              disabled={!options?.length}
+            >
+              Tout
+            </button>
+            <button
+              type="button"
+              className="multi-action-btn"
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange([]) }}
+              disabled={!list.length}
+            >
+              Aucun
+            </button>
+          </div>
+          <div className="multi-select-options">
+            {(options || []).map((opt) => (
+              <label key={opt} className="multi-select-option">
+                <input
+                  type="checkbox"
+                  checked={list.includes(opt)}
+                  onChange={() => toggleMultiValue(onChange, opt)}
+                />
+                <span className="multi-select-label">{opt}</span>
+              </label>
+            ))}
+            {!options?.length && (
+              <div className="multi-select-empty">Aucune option</div>
+            )}
+          </div>
+        </div>
+      </details>
+    )
+  }
 
   const [campaignDailyGoals, setCampaignDailyGoals] = useState({})
 
@@ -160,7 +213,7 @@ function App() {
   const fetchBudgets = useCallback(async () => {
     setBudgetsLoading(true)
     try {
-      const data = await api.campaigns.budgets(filterAccount ? { account: filterAccount } : {})
+      const data = await api.campaigns.budgets({})
       setBudgetsList(data.budgets || [])
       setShowBudgetsModal(true)
     } catch (err) {
@@ -168,14 +221,14 @@ function App() {
     } finally {
       setBudgetsLoading(false)
     }
-  }, [filterAccount])
+  }, [])
 
   const loadBudgetsForPage = useCallback(async () => {
     if (!dbMode) return
     setBudgetsLoading(true)
     setApiError(null)
     try {
-      const data = await api.campaigns.budgets(filterAccount ? { account: filterAccount } : {})
+      const data = await api.campaigns.budgets({})
       setBudgetsList(data.budgets || [])
     } catch (err) {
       const msg = err?.message || 'Erreur lors du chargement des budgets'
@@ -187,7 +240,7 @@ function App() {
     } finally {
       setBudgetsLoading(false)
     }
-  }, [dbMode, filterAccount])
+  }, [dbMode])
 
   // Spend par campagne (période sélectionnée) pour le modal budgets
   const spendByCampaignId = useMemo(() => {
@@ -282,7 +335,6 @@ function App() {
       const params = range?.preset
         ? { datePreset: range.preset }
         : { since: dateFrom, until: dateTo }
-      if (filterAccount) params.account = filterAccount
       const data = await api.reports.spend(params)
       setSpendData(data)
     } catch (err) {
@@ -290,24 +342,23 @@ function App() {
     } finally {
       setIsLoading(false)
     }
-  }, [dateRange, dateFrom, dateTo, filterAccount])
+  }, [dateRange, dateFrom, dateTo])
 
   const fetchWinners = useCallback(async () => {
     try {
       const range = DATE_RANGES.find((r) => r.id === dateRange)
       const params = range?.preset ? { datePreset: range.preset } : { since: dateFrom, until: dateTo }
-      if (filterAccount) params.account = filterAccount
       const data = await api.reports.winners(params)
       setWinnersData(data)
     } catch (err) {
       console.warn('Winners fetch failed:', err.message)
       setWinnersData(null)
     }
-  }, [dateRange, dateFrom, dateTo, filterAccount])
+  }, [dateRange, dateFrom, dateTo])
 
   useEffect(() => {
     if (activeTab === 'spend' || activeTab === 'general' || activeTab === 'winners' || activeTab === 'budget') fetchSpend()
-  }, [activeTab, dateRange, dateFrom, dateTo, filterAccount, fetchSpend])
+  }, [activeTab, dateRange, dateFrom, dateTo, fetchSpend])
 
   useEffect(() => {
     if ((activeTab === 'spend' || activeTab === 'budget') && dbMode) {
@@ -321,11 +372,11 @@ function App() {
 
   useEffect(() => {
     if (activeTab === 'winners') fetchWinners()
-  }, [activeTab, dateRange, dateFrom, dateTo, filterAccount, fetchWinners])
+  }, [activeTab, dateRange, dateFrom, dateTo, fetchWinners])
 
   useEffect(() => {
     if (activeTab === 'budget' && dbMode) loadBudgetsForPage()
-  }, [activeTab, dbMode, filterAccount, loadBudgetsForPage])
+  }, [activeTab, dbMode, loadBudgetsForPage])
 
   const handleLogout = async () => {
     try {
@@ -364,10 +415,13 @@ function App() {
     if (spendData?.campaigns?.length) {
       let campaigns = [...spendData.campaigns]
       const getProductKey = (c) => c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
-      if (filterAccount) campaigns = campaigns.filter((c) => (c.accountName || c.accountId) === filterAccount)
-      if (filterProduct) campaigns = campaigns.filter((c) => getProductKey(c) === filterProduct)
+      if (filterAccount?.length) campaigns = campaigns.filter((c) => filterAccount.includes(c.accountName || c.accountId))
+      if (filterProduct?.length) campaigns = campaigns.filter((c) => filterProduct.includes(getProductKey(c)))
       if (filterModel) campaigns = campaigns.filter((c) => extractModel(c.accountName || '') === filterModel)
-      if (filterMarket) campaigns = campaigns.filter((c) => String(c.codeCountry || 'Unknown').toUpperCase() === String(filterMarket).toUpperCase())
+      if (filterMarket?.length) {
+        const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
+        campaigns = campaigns.filter((c) => wanted.has(String(c.codeCountry || 'Unknown').toUpperCase()))
+      }
 
       const budgetByKey = {}
       for (const b of spendData.byAccount || []) {
@@ -509,8 +563,11 @@ function App() {
   const filteredWinners = useMemo(() => {
     const rawList = winnersData?.winners || []
     let list = [...rawList]
-    if (filterMarket) list = list.filter((r) => String(r.market || '').toUpperCase() === String(filterMarket).toUpperCase())
-    if (filterProduct) list = list.filter((r) => r.product === filterProduct)
+    if (filterMarket?.length) {
+      const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
+      list = list.filter((r) => wanted.has(String(r.market || '').toUpperCase()))
+    }
+    if (filterProduct?.length) list = list.filter((r) => filterProduct.includes(r.product))
     const minSpend = Number(winnersMinSpend) || 0
     if (minSpend > 0) list = list.filter((r) => (parseFloat(r.spend) || 0) >= minSpend)
     const getVal = (r, key) => {
@@ -581,12 +638,13 @@ function App() {
 
     const isIncluded = (c) => {
       if (!c) return false
-      if (filterAccount && (c.accountName || c.accountId) !== filterAccount) return false
-      if (filterProduct && getProductKey(c) !== filterProduct) return false
+      if (filterAccount?.length && !filterAccount.includes(c.accountName || c.accountId)) return false
+      if (filterProduct?.length && !filterProduct.includes(getProductKey(c))) return false
       if (filterModel && extractModel(c.accountName || '') !== filterModel) return false
-      if (filterMarket) {
+      if (filterMarket?.length) {
         const code = String(c.codeCountry || 'Unknown').toUpperCase()
-        if (code !== String(filterMarket).toUpperCase()) return false
+        const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
+        if (!wanted.has(code)) return false
       }
       return true
     }
@@ -676,6 +734,8 @@ function App() {
         product: r.product,
         format: r.format,
         spend: r.spend,
+        purchases: r.purchases ?? 0,
+        purchaseValue: r.purchaseValue ?? 0,
         impressions: r.impressions ?? '-',
         clicks: r.clicks ?? '-',
         ctr: r.ctr != null ? `${r.ctr}%` : '-',
@@ -688,6 +748,8 @@ function App() {
         { key: 'product', label: 'Product' },
         { key: 'format', label: 'Format' },
         { key: 'spend', label: 'Spend' },
+        { key: 'purchases', label: 'Purchases' },
+        { key: 'purchaseValue', label: 'Conv. value' },
         { key: 'impressions', label: 'Impressions' },
         { key: 'clicks', label: 'Clicks' },
         { key: 'ctr', label: 'CTR' },
@@ -789,9 +851,15 @@ function App() {
                       {budgetsList
                         .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
                         .filter((b) => {
-                          if (!filterMarket) return true
-                          const m = getMarketFromCampaignName(b.campaignName) || 'Unknown'
-                          return m.toUpperCase() === String(filterMarket).toUpperCase()
+                          if (!filterAccount?.length) return true
+                          const acc = b.accountName || b.accountId
+                          return filterAccount.includes(acc)
+                        })
+                        .filter((b) => {
+                          if (!filterMarket?.length) return true
+                          const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
+                          const m = (getMarketFromCampaignName(b.campaignName) || 'Unknown').toUpperCase()
+                          return wanted.has(m)
                         })
                         .sort((a, b) => (b.dailyBudget || b.lifetimeBudget / 30) - (a.dailyBudget || a.lifetimeBudget / 30))
                         .map((b) => {
@@ -831,7 +899,19 @@ function App() {
                   </div>
                   <p className="modal-footer-note">
                     {(() => {
-                      const withSpend = budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                      const withSpend = budgetsList
+                        .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                        .filter((b) => {
+                          if (!filterAccount?.length) return true
+                          const acc = b.accountName || b.accountId
+                          return filterAccount.includes(acc)
+                        })
+                        .filter((b) => {
+                          if (!filterMarket?.length) return true
+                          const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
+                          const m = (getMarketFromCampaignName(b.campaignName) || 'Unknown').toUpperCase()
+                          return wanted.has(m)
+                        })
                       const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE' && b.hasActiveAds !== false).length
                       const adsOff = withSpend.filter((b) => b.hasActiveAds === false).length
                       const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
@@ -1024,24 +1104,30 @@ function App() {
                 </div>
                 <div className="filter-group">
                   <Filter size={16} />
-                  <select id="filter-account-spend" name="filterAccount" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account">
-                    <option value="">All ad accounts</option>
-                    {accountOptions.map((a) => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </select>
-                  <select id="filter-market-spend" name="filterMarket" value={filterMarket} onChange={(e) => setFilterMarket(e.target.value)} title="Market (via naming)">
-                    <option value="">All markets</option>
-                    {marketOptions.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                  <select id="filter-product-spend" name="filterProduct" value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
-                    <option value="">All products</option>
-                    {productOptions.map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
+                  <MultiSelect
+                    id="filter-account-spend"
+                    title="Ad accounts"
+                    options={accountOptions}
+                    selected={filterAccount}
+                    onChange={setFilterAccount}
+                    placeholder="Ad accounts"
+                  />
+                  <MultiSelect
+                    id="filter-market-spend"
+                    title="Markets"
+                    options={marketOptions}
+                    selected={filterMarket}
+                    onChange={setFilterMarket}
+                    placeholder="Markets (via naming)"
+                  />
+                  <MultiSelect
+                    id="filter-product-spend"
+                    title="Products"
+                    options={productOptions}
+                    selected={filterProduct}
+                    onChange={setFilterProduct}
+                    placeholder="Products"
+                  />
                   <select id="filter-model-spend" name="filterModel" value={filterModel} onChange={(e) => setFilterModel(e.target.value)} title="Model">
                     <option value="">COD / DROP</option>
                     <option value="COD">COD</option>
@@ -1329,18 +1415,22 @@ function App() {
                 </div>
                 <div className="filter-group">
                   <Filter size={16} />
-                  <select id="filter-account-budget" name="filterAccount" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account">
-                    <option value="">All ad accounts</option>
-                    {accountOptions.map((a) => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </select>
-                  <select id="filter-market-budget" name="filterMarket" value={filterMarket} onChange={(e) => setFilterMarket(e.target.value)} title="Market (via naming)">
-                    <option value="">All markets</option>
-                    {marketOptions.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
+                  <MultiSelect
+                    id="filter-account-budget"
+                    title="Ad accounts"
+                    options={accountOptions}
+                    selected={filterAccount}
+                    onChange={setFilterAccount}
+                    placeholder="Ad accounts"
+                  />
+                  <MultiSelect
+                    id="filter-market-budget"
+                    title="Markets"
+                    options={marketOptions}
+                    selected={filterMarket}
+                    onChange={setFilterMarket}
+                    placeholder="Markets (via naming)"
+                  />
                 </div>
                 {dbMode && (
                   <button
@@ -1378,9 +1468,15 @@ function App() {
                       {budgetsList
                         .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
                         .filter((b) => {
-                          if (!filterMarket) return true
-                          const m = getMarketFromCampaignName(b.campaignName) || 'Unknown'
-                          return m.toUpperCase() === String(filterMarket).toUpperCase()
+                          if (!filterAccount?.length) return true
+                          const acc = b.accountName || b.accountId
+                          return filterAccount.includes(acc)
+                        })
+                        .filter((b) => {
+                          if (!filterMarket?.length) return true
+                          const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
+                          const m = (getMarketFromCampaignName(b.campaignName) || 'Unknown').toUpperCase()
+                          return wanted.has(m)
                         })
                         .sort((a, b) => (b.dailyBudget || b.lifetimeBudget / 30) - (a.dailyBudget || a.lifetimeBudget / 30))
                         .map((b) => {
@@ -1420,7 +1516,19 @@ function App() {
                 </div>
                 <p className="modal-footer-note">
                   {(() => {
-                    const withSpend = budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                    const withSpend = budgetsList
+                      .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                      .filter((b) => {
+                        if (!filterAccount?.length) return true
+                        const acc = b.accountName || b.accountId
+                        return filterAccount.includes(acc)
+                      })
+                      .filter((b) => {
+                        if (!filterMarket?.length) return true
+                        const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
+                        const m = (getMarketFromCampaignName(b.campaignName) || 'Unknown').toUpperCase()
+                        return wanted.has(m)
+                      })
                     const active = withSpend.filter((b) => (b.effectiveStatus || '').toUpperCase() === 'ACTIVE' && b.hasActiveAds !== false).length
                     const adsOff = withSpend.filter((b) => b.hasActiveAds === false).length
                     const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
@@ -1465,24 +1573,30 @@ function App() {
                     </button>
                   )}
                   <Filter size={16} />
-                  <select id="filter-account-winners" name="filterAccountWinners" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account">
-                    <option value="">All ad accounts</option>
-                    {accountOptions.map((a) => (
-                      <option key={a} value={a}>{a}</option>
-                    ))}
-                  </select>
-                  <select id="filter-market-winners" name="filterMarketWinners" value={filterMarket} onChange={(e) => setFilterMarket(e.target.value)} title="Market (via naming)">
-                    <option value="">All markets</option>
-                    {marketOptions.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                  <select id="filter-product-winners" name="filterProductWinners" value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
-                    <option value="">All products</option>
-                    {productOptions.map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
+                  <MultiSelect
+                    id="filter-account-winners"
+                    title="Ad accounts"
+                    options={accountOptions}
+                    selected={filterAccount}
+                    onChange={setFilterAccount}
+                    placeholder="Ad accounts"
+                  />
+                  <MultiSelect
+                    id="filter-market-winners"
+                    title="Markets"
+                    options={marketOptions}
+                    selected={filterMarket}
+                    onChange={setFilterMarket}
+                    placeholder="Markets (via naming)"
+                  />
+                  <MultiSelect
+                    id="filter-product-winners"
+                    title="Products"
+                    options={productOptions}
+                    selected={filterProduct}
+                    onChange={setFilterProduct}
+                    placeholder="Products"
+                  />
                   <label className="min-spend-filter" htmlFor="winners-min-spend" title="Spend minimum en $">
                     Min $
                     <input
