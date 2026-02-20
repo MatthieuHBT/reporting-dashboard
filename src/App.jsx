@@ -117,6 +117,7 @@ function App() {
   const [winnersSortBy, setWinnersSortBy] = useState('spend')
   const [winnersSortDir, setWinnersSortDir] = useState('desc') // desc = meilleur en premier
   const [winnersMinSpend, setWinnersMinSpend] = useState(0)
+  const [winnersMinRoas, setWinnersMinRoas] = useState(0)
   const [stockFilterWarehouse, setStockFilterWarehouse] = useState('')
   const [spendData, setSpendData] = useState(null)
   const [spendTodayData, setSpendTodayData] = useState(null)
@@ -581,6 +582,13 @@ function App() {
     if (filterProduct?.length) list = list.filter((r) => filterProduct.includes(normalizeProductName(r.product)))
     const minSpend = Number(winnersMinSpend) || 0
     if (minSpend > 0) list = list.filter((r) => (parseFloat(r.spend) || 0) >= minSpend)
+    const minRoas = Number(winnersMinRoas) || 0
+    if (minRoas > 0) {
+      list = list.filter((r) => {
+        const roas = typeof r.roas === 'number' ? r.roas : null
+        return roas != null && roas >= minRoas
+      })
+    }
     const getVal = (r, key) => {
       if (key === 'spend') return parseFloat(r.spend) || 0
       if (key === 'impressions') return parseInt(r.impressions, 10) || 0
@@ -600,7 +608,7 @@ function App() {
       return mult * String(va).localeCompare(String(vb), undefined, { numeric: true })
     })
     return list.map((r, i) => ({ ...r, rank: i + 1 }))
-  }, [winnersData, filterMarket, filterProduct, winnersMinSpend, winnersSortBy, winnersSortDir])
+  }, [winnersData, filterMarket, filterProduct, winnersMinSpend, winnersMinRoas, winnersSortBy, winnersSortDir])
 
   const handleWinnersSort = (col) => {
     if (winnersSortBy === col) setWinnersSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))
@@ -1620,6 +1628,18 @@ function App() {
                       step={50}
                       value={winnersMinSpend}
                       onChange={(e) => setWinnersMinSpend(Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </label>
+                  <label className="min-spend-filter" htmlFor="winners-min-roas" title="ROAS minimum (ex: 3 = au-dessus de 3x)">
+                    Min ROAS
+                    <input
+                      id="winners-min-roas"
+                      name="winnersMinRoas"
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={winnersMinRoas}
+                      onChange={(e) => setWinnersMinRoas(Math.max(0, Number(e.target.value) || 0))}
                     />
                   </label>
                 </div>
