@@ -745,11 +745,12 @@ app.get('/api/reports/winners', async (req, res) => {
       for (const r of rows) {
         const key = r.adId || r.adName
         if (!byAd[key]) {
-          byAd[key] = { adName: r.adName, adId: r.adId, spend: 0, impressions: 0, clicks: 0, purchaseValue: 0 }
+          byAd[key] = { adName: r.adName, adId: r.adId, spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 }
         }
         byAd[key].spend += r.spend || 0
         byAd[key].impressions += r.impressions || 0
         byAd[key].clicks += r.clicks || 0
+        byAd[key].purchases += r.purchaseCount || 0
         byAd[key].purchaseValue += r.purchaseValue || 0
       }
       const { parseAdName } = await import('./utils/parseAdNaming.js')
@@ -767,6 +768,8 @@ app.get('/api/reports/winners', async (req, res) => {
             spend: ad.spend,
             impressions: ad.impressions,
             clicks: ad.clicks,
+            purchases: ad.purchases || 0,
+            purchaseValue: Math.round((ad.purchaseValue || 0) * 100) / 100,
             roas: roas ?? '-',
             ctr: ad.impressions > 0 ? Math.round((ad.clicks / ad.impressions) * 1000) / 10 : null,
           }
@@ -805,12 +808,14 @@ app.get('/api/reports/winners', async (req, res) => {
             spend: 0,
             impressions: 0,
             clicks: 0,
+            purchases: 0,
             purchaseValue: 0,
           }
         }
         byAd[key].spend += r.spend || 0
         byAd[key].impressions += r.impressions || 0
         byAd[key].clicks += r.clicks || 0
+        byAd[key].purchases += r.purchaseCount || 0
         byAd[key].purchaseValue += r.purchaseValue || 0
       }
       const { parseAdName } = await import('./utils/parseAdNaming.js')
@@ -830,6 +835,8 @@ app.get('/api/reports/winners', async (req, res) => {
             spend: ad.spend,
             impressions: ad.impressions,
             clicks: ad.clicks,
+            purchases: ad.purchases || 0,
+            purchaseValue: Math.round((ad.purchaseValue || 0) * 100) / 100,
             roas: roas ?? '-',
             ctr: ad.impressions > 0 ? Math.round((ad.clicks / ad.impressions) * 1000) / 10 : null,
           }
@@ -857,7 +864,7 @@ async function fetchWinnersFromApi(req, res) {
   const { datePreset, since, until, account } = req.query
   const useCustomRange = since && until
   const insightsParams = {
-    fields: 'ad_name,ad_id,spend,impressions,clicks,action_values',
+    fields: 'ad_name,ad_id,spend,impressions,clicks,actions,action_values',
     level: 'ad',
     limit: 500,
   }
@@ -893,6 +900,18 @@ async function fetchWinnersFromApi(req, res) {
         for (const a of ads) {
           const spend = parseFloat(a.spend || 0)
           let roas = null
+          let purchaseValue = 0
+          let purchases = 0
+          if (a.actions && Array.isArray(a.actions)) {
+            const purchase = a.actions.find(
+              (av) =>
+                av.action_type &&
+                (av.action_type.includes('purchase') ||
+                  av.action_type.includes('fb_pixel_purchase') ||
+                  av.action_type === 'purchase')
+            )
+            if (purchase?.value != null) purchases = parseInt(purchase.value, 10) || 0
+          }
           if (a.action_values && Array.isArray(a.action_values)) {
             const purchase = a.action_values.find(
               (av) =>
@@ -902,7 +921,8 @@ async function fetchWinnersFromApi(req, res) {
                   av.action_type === 'purchase')
             )
             if (purchase && purchase.value && spend > 0) {
-              roas = Math.round((parseFloat(purchase.value) / spend) * 100) / 100
+              purchaseValue = parseFloat(purchase.value) || 0
+              roas = Math.round((purchaseValue / spend) * 100) / 100
             }
           }
           allAds.push({
@@ -911,6 +931,8 @@ async function fetchWinnersFromApi(req, res) {
             spend,
             impressions: parseInt(a.impressions || 0, 10),
             clicks: parseInt(a.clicks || 0, 10),
+            purchases,
+            purchaseValue,
             roas,
           })
         }
@@ -931,6 +953,8 @@ async function fetchWinnersFromApi(req, res) {
         spend: ad.spend,
         impressions: ad.impressions,
         clicks: ad.clicks,
+        purchases: ad.purchases || 0,
+        purchaseValue: Math.round((ad.purchaseValue || 0) * 100) / 100,
         roas: ad.roas ?? '-',
         ctr: ad.impressions > 0 ? Math.round((ad.clicks / ad.impressions) * 1000) / 10 : null,
       }

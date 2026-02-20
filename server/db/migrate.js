@@ -76,9 +76,11 @@ const statements = [
     impressions INT DEFAULT 0,
     clicks INT DEFAULT 0,
     purchase_value DECIMAL(12, 2) DEFAULT 0,
+    purchase_count INT DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
   )`,
   `CREATE INDEX IF NOT EXISTS idx_ads_raw_date ON ads_raw(date)`,
+  `ALTER TABLE ads_raw ADD COLUMN IF NOT EXISTS purchase_count INT DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS settings (
     key VARCHAR(100) PRIMARY KEY,
     value TEXT,

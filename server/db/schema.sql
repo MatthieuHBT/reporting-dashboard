@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS ads_raw (
   impressions INT DEFAULT 0,
   clicks INT DEFAULT 0,
   purchase_value DECIMAL(12, 2) DEFAULT 0,
+  purchase_count INT DEFAULT 0,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

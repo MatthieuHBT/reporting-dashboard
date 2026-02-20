@@ -83,6 +83,7 @@ const SIDEBAR_SECTIONS = [
 
 const DATE_RANGES = [
   { id: 'full', label: 'Full', days: 0, preset: 'full' },
+  { id: 'today', label: 'Today', days: 1, preset: 'today' },
   { id: '30d', label: 'Last 30 days', days: 30, preset: 'last_30d' },
   { id: 'custom', label: 'Custom', days: 0, preset: null },
 ]
@@ -516,12 +517,14 @@ function App() {
       if (key === 'spend') return parseFloat(r.spend) || 0
       if (key === 'impressions') return parseInt(r.impressions, 10) || 0
       if (key === 'clicks') return parseInt(r.clicks, 10) || 0
+      if (key === 'purchases') return parseInt(r.purchases, 10) || 0
+      if (key === 'purchaseValue') return parseFloat(r.purchaseValue) || 0
       if (key === 'ctr') return parseFloat(r.ctr) || 0
       if (key === 'roas') return typeof r.roas === 'number' ? r.roas : 0
       return String(r[key] ?? '').toLowerCase()
     }
     const mult = winnersSortDir === 'desc' ? -1 : 1
-    const isNum = ['spend', 'impressions', 'clicks', 'ctr', 'roas'].includes(winnersSortBy)
+    const isNum = ['spend', 'impressions', 'clicks', 'purchases', 'purchaseValue', 'ctr', 'roas'].includes(winnersSortBy)
     list.sort((a, b) => {
       const va = getVal(a, winnersSortBy)
       const vb = getVal(b, winnersSortBy)
@@ -1524,6 +1527,8 @@ function App() {
                       <SortTh col="spend" label="Spend" className="num" />
                       <SortTh col="impressions" label="Impressions" className="num" />
                       <SortTh col="clicks" label="Clicks" className="num" />
+                      <SortTh col="purchases" label="Purchases" className="num" />
+                      <SortTh col="purchaseValue" label="Conv. value" className="num" />
                       <SortTh col="ctr" label="CTR" className="num" />
                       <SortTh col="roas" label="ROAS" />
                     </tr>
@@ -1543,6 +1548,8 @@ function App() {
                         <td className="num">${row.spend.toLocaleString()}</td>
                         <td className="num">{(row.impressions || 0).toLocaleString()}</td>
                         <td className="num">{(row.clicks || 0).toLocaleString()}</td>
+                        <td className="num">{(row.purchases || 0).toLocaleString()}</td>
+                        <td className="num">${(row.purchaseValue || 0).toLocaleString()}</td>
                         <td className="num">{row.ctr != null ? `${row.ctr}%` : '-'}</td>
                         <td>
                           <span className={`roas-badge ${typeof row.roas === 'number' && row.roas >= 2.5 ? 'high' : ''}`}>

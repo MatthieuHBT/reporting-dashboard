@@ -193,7 +193,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     if (winnersOnly || !skipAds) {
     console.log('[runFullSync] Sync ads_raw (winners)...')
     const insightsParams = {
-      fields: 'ad_name,ad_id,spend,impressions,clicks,action_values',
+      fields: 'ad_name,ad_id,spend,impressions,clicks,actions,action_values',
       level: 'ad',
       limit: 500,
       time_increment: 1,
@@ -208,6 +208,17 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
         console.log(`[runFullSync] Account ${acc.name}: ${ads.length} ads`)
         for (const a of ads) {
           let purchaseValue = 0
+          let purchaseCount = 0
+          if (a.actions && Array.isArray(a.actions)) {
+            const purchase = a.actions.find(
+              (av) =>
+                av.action_type &&
+                (av.action_type.includes('purchase') ||
+                  av.action_type.includes('fb_pixel_purchase') ||
+                  av.action_type === 'purchase')
+            )
+            if (purchase?.value != null) purchaseCount = parseInt(purchase.value, 10) || 0
+          }
           if (a.action_values && Array.isArray(a.action_values)) {
             const purchase = a.action_values.find(
               (av) =>
@@ -228,6 +239,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
             impressions: parseInt(a.impressions || 0, 10),
             clicks: parseInt(a.clicks || 0, 10),
             purchaseValue,
+            purchaseCount,
           })
         }
       } catch (e) {

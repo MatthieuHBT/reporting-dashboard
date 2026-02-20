@@ -161,21 +161,42 @@ export async function insertAdsRaw(syncRunId, ads) {
   for (let i = 0; i < ads.length; i += BATCH) {
     const batch = ads.slice(i, i + BATCH)
     for (const a of batch) {
-      await sql`
-        INSERT INTO ads_raw (sync_run_id, ad_id, ad_name, account_id, account_name, date, spend, impressions, clicks, purchase_value)
-        VALUES (
-          ${syncRunId},
-          ${a.adId || null},
-          ${a.adName || null},
-          ${a.accountId || null},
-          ${a.accountName || null},
-          ${a.date || null},
-          ${a.spend || 0},
-          ${a.impressions || 0},
-          ${a.clicks || 0},
-          ${a.purchaseValue || 0}
-        )
-      `
+      try {
+        await sql`
+          INSERT INTO ads_raw (sync_run_id, ad_id, ad_name, account_id, account_name, date, spend, impressions, clicks, purchase_value, purchase_count)
+          VALUES (
+            ${syncRunId},
+            ${a.adId || null},
+            ${a.adName || null},
+            ${a.accountId || null},
+            ${a.accountName || null},
+            ${a.date || null},
+            ${a.spend || 0},
+            ${a.impressions || 0},
+            ${a.clicks || 0},
+            ${a.purchaseValue || 0},
+            ${a.purchaseCount || 0}
+          )
+        `
+      } catch (e) {
+        const msg = String(e?.message || '')
+        if (!msg.includes('purchase_count')) throw e
+        await sql`
+          INSERT INTO ads_raw (sync_run_id, ad_id, ad_name, account_id, account_name, date, spend, impressions, clicks, purchase_value)
+          VALUES (
+            ${syncRunId},
+            ${a.adId || null},
+            ${a.adName || null},
+            ${a.accountId || null},
+            ${a.accountName || null},
+            ${a.date || null},
+            ${a.spend || 0},
+            ${a.impressions || 0},
+            ${a.clicks || 0},
+            ${a.purchaseValue || 0}
+          )
+        `
+      }
     }
   }
 }
@@ -210,5 +231,6 @@ export async function getAdsRaw(since, until, accountName = null) {
     impressions: parseInt(r.impressions || 0, 10),
     clicks: parseInt(r.clicks || 0, 10),
     purchaseValue: parseFloat(r.purchase_value || 0),
+    purchaseCount: parseInt(r.purchase_count || 0, 10),
   }))
 }
