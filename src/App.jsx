@@ -51,6 +51,15 @@ function getMarketFromCampaignName(name) {
   return m?.[1] || ''
 }
 
+function normalizeProductName(name) {
+  if (!name) return name
+  // "PDP" est un type de page (landing), pas un produit → on le retire du produit
+  return String(name)
+    .replace(/\s+PDP(\s+PDP)*\s*$/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 const SIDEBAR_SECTIONS = [
   {
     title: 'General',
@@ -414,7 +423,9 @@ function App() {
   } = useMemo(() => {
     if (spendData?.campaigns?.length) {
       let campaigns = [...spendData.campaigns]
-      const getProductKey = (c) => c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
+      const getProductKey = (c) => normalizeProductName(
+        c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
+      )
       if (filterAccount?.length) campaigns = campaigns.filter((c) => filterAccount.includes(c.accountName || c.accountId))
       if (filterProduct?.length) campaigns = campaigns.filter((c) => filterProduct.includes(getProductKey(c)))
       if (filterModel) campaigns = campaigns.filter((c) => extractModel(c.accountName || '') === filterModel)
@@ -567,7 +578,7 @@ function App() {
       const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
       list = list.filter((r) => wanted.has(String(r.market || '').toUpperCase()))
     }
-    if (filterProduct?.length) list = list.filter((r) => filterProduct.includes(r.product))
+    if (filterProduct?.length) list = list.filter((r) => filterProduct.includes(normalizeProductName(r.product)))
     const minSpend = Number(winnersMinSpend) || 0
     if (minSpend > 0) list = list.filter((r) => (parseFloat(r.spend) || 0) >= minSpend)
     const getVal = (r, key) => {
@@ -634,7 +645,9 @@ function App() {
   )
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const { spendTodayByAccount, totalSpendToday } = useMemo(() => {
-    const getProductKey = (c) => c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
+    const getProductKey = (c) => normalizeProductName(
+      c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
+    )
 
     const isIncluded = (c) => {
       if (!c) return false
@@ -731,7 +744,7 @@ function App() {
         rank: r.rank,
         adName: r.adName,
         market: r.market,
-        product: r.product,
+        product: normalizeProductName(r.product),
         format: r.format,
         spend: r.spend,
         purchases: r.purchases ?? 0,
@@ -1657,7 +1670,7 @@ function App() {
                         <td><span className="rank-badge">{row.rank}</span></td>
                         <td><code className="ad-name">{row.adName}</code></td>
                         <td><span className="market-tag">{row.market}</span></td>
-                        <td>{row.product}</td>
+                        <td>{normalizeProductName(row.product)}</td>
                         <td><span className="format-badge">{row.format}</span></td>
                         <td className="num">${row.spend.toLocaleString()}</td>
                         <td className="num">{(row.impressions || 0).toLocaleString()}</td>
