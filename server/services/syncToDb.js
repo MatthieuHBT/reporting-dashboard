@@ -12,7 +12,8 @@ import * as dbBudgets from '../db/budgets.js'
 
 const FULL_SINCE = '2025-01-01'
 const FIRST_SYNC_DAYS = 30
-const WINNERS_MAX_DAYS = 60
+// Winners-only sync: garder petit pour éviter timeouts
+const WINNERS_MAX_DAYS = 14
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -35,9 +36,10 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
   let skipCampaignsSync = false
 
   if (winnersOnly) {
-    const days = winnersDays ?? WINNERS_MAX_DAYS
+    const requested = winnersDays ?? WINNERS_MAX_DAYS
+    const days = Math.min(Math.max(1, requested), WINNERS_MAX_DAYS)
     since = addDays(until, -Math.min(days, 365))
-    console.log('[runFullSync] Mode winnersOnly:', { since, until, days })
+    console.log('[runFullSync] Mode winnersOnly:', { since, until, days, requested })
   } else if (!forceFull) {
     const last = await db.getLatestSyncRun()
     const lastUntilVal = last?.date_until ?? last?.dateUntil

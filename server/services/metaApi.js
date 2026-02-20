@@ -1,4 +1,15 @@
 const META_API_BASE = 'https://graph.facebook.com/v21.0'
+const META_FETCH_TIMEOUT_MS = 60_000
+
+async function fetchWithTimeout(url) {
+  const controller = new AbortController()
+  const t = setTimeout(() => controller.abort(), META_FETCH_TIMEOUT_MS)
+  try {
+    return await fetch(url, { signal: controller.signal })
+  } finally {
+    clearTimeout(t)
+  }
+}
 
 export async function fetchMetaData(accessToken, path, params = {}) {
   const url = new URL(path.startsWith('http') ? path : `${META_API_BASE}${path}`)
@@ -7,7 +18,7 @@ export async function fetchMetaData(accessToken, path, params = {}) {
     if (v != null) url.searchParams.set(k, v)
   }
 
-  const res = await fetch(url.toString())
+  const res = await fetchWithTimeout(url.toString())
   const json = await res.json()
 
   if (json.error) {
@@ -33,7 +44,7 @@ export async function fetchMetaDataAllPages(accessToken, path, params = {}) {
       return u.toString()
     })()
 
-    const res = await fetch(fetchUrl)
+    const res = await fetchWithTimeout(fetchUrl)
     const json = await res.json()
 
     if (json.error) {
