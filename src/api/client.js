@@ -76,6 +76,7 @@ export const api = {
       body: JSON.stringify({
         accessToken: accessToken || undefined,
         accounts: Array.isArray(opts.accounts) && opts.accounts.length ? opts.accounts : undefined,
+        winnersFilters: opts.winnersFilters || undefined,
       }),
       timeout: SYNC_TIMEOUT,
     })
