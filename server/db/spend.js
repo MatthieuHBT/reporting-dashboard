@@ -157,46 +157,47 @@ export async function deleteAdsRawFromDate(since) {
 /** Insère des ads pour Winners */
 export async function insertAdsRaw(syncRunId, ads) {
   guard()
-  const BATCH = 100
+  const BATCH = 500
+
+  const insertBatch = async (batch, withPurchaseCount) => {
+    const cols = withPurchaseCount
+      ? ['sync_run_id', 'ad_id', 'ad_name', 'account_id', 'account_name', 'date', 'spend', 'impressions', 'clicks', 'purchase_value', 'purchase_count']
+      : ['sync_run_id', 'ad_id', 'ad_name', 'account_id', 'account_name', 'date', 'spend', 'impressions', 'clicks', 'purchase_value']
+
+    const values = []
+    const rows = []
+    let p = 1
+
+    for (const a of batch) {
+      const row = [
+        syncRunId,
+        a.adId || null,
+        a.adName || null,
+        a.accountId || null,
+        a.accountName || null,
+        a.date || null,
+        a.spend || 0,
+        a.impressions || 0,
+        a.clicks || 0,
+        a.purchaseValue || 0,
+      ]
+      if (withPurchaseCount) row.push(a.purchaseCount || 0)
+      values.push(...row)
+      rows.push(`(${row.map(() => `$${p++}`).join(',')})`)
+    }
+
+    const text = `INSERT INTO ads_raw (${cols.join(',')}) VALUES ${rows.join(',')}`
+    await sql(text, values)
+  }
+
   for (let i = 0; i < ads.length; i += BATCH) {
     const batch = ads.slice(i, i + BATCH)
-    for (const a of batch) {
-      try {
-        await sql`
-          INSERT INTO ads_raw (sync_run_id, ad_id, ad_name, account_id, account_name, date, spend, impressions, clicks, purchase_value, purchase_count)
-          VALUES (
-            ${syncRunId},
-            ${a.adId || null},
-            ${a.adName || null},
-            ${a.accountId || null},
-            ${a.accountName || null},
-            ${a.date || null},
-            ${a.spend || 0},
-            ${a.impressions || 0},
-            ${a.clicks || 0},
-            ${a.purchaseValue || 0},
-            ${a.purchaseCount || 0}
-          )
-        `
-      } catch (e) {
-        const msg = String(e?.message || '')
-        if (!msg.includes('purchase_count')) throw e
-        await sql`
-          INSERT INTO ads_raw (sync_run_id, ad_id, ad_name, account_id, account_name, date, spend, impressions, clicks, purchase_value)
-          VALUES (
-            ${syncRunId},
-            ${a.adId || null},
-            ${a.adName || null},
-            ${a.accountId || null},
-            ${a.accountName || null},
-            ${a.date || null},
-            ${a.spend || 0},
-            ${a.impressions || 0},
-            ${a.clicks || 0},
-            ${a.purchaseValue || 0}
-          )
-        `
-      }
+    try {
+      await insertBatch(batch, true)
+    } catch (e) {
+      const msg = String(e?.message || '')
+      if (!msg.includes('purchase_count')) throw e
+      await insertBatch(batch, false)
     }
   }
 }

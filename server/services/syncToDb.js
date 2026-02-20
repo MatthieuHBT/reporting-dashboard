@@ -196,7 +196,6 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       fields: 'ad_name,ad_id,spend,impressions,clicks,actions,action_values',
       level: 'ad',
       limit: 500,
-      time_increment: 1,
       time_range: timeRange,
     }
     adsRaw = []
