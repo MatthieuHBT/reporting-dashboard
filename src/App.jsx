@@ -60,6 +60,12 @@ function normalizeProductName(name) {
     .trim()
 }
 
+function formatDayLabel(dateStr) {
+  if (!dateStr) return '-'
+  const d = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`)
+  return isNaN(d.getTime()) ? String(dateStr) : format(d, 'd MMM')
+}
+
 const SIDEBAR_SECTIONS = [
   {
     title: 'General',
@@ -496,9 +502,8 @@ function App() {
       const trend = Object.entries(byDate)
         .sort((a, b) => a[0].localeCompare(b[0]))
         .map(([dateStr, spend]) => {
-          const d = new Date(dateStr)
-          const label = !dateStr || isNaN(d.getTime()) ? (dateStr || '-') : format(d, 'd MMM')
-          return { date: label, spend: Math.round(spend * 100) / 100 }
+          const iso = String(dateStr || '').slice(0, 10)
+          return { date: iso, spend: Math.round(spend * 100) / 100 }
         })
       const allProds = [...new Set(campaigns.map((c) => getProductKey(c)).filter(Boolean))].sort()
       const allMkts = [...new Set(spendData.campaigns.map((c) => (c.codeCountry || 'Unknown')).filter(Boolean))].sort()
@@ -1233,7 +1238,12 @@ function App() {
                   <ResponsiveContainer width="100%" height={280}>
                     <LineChart data={Array.isArray(spendTrend) ? spendTrend : []}>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" tick={{ fill: 'currentColor' }} fontSize={12} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: 'currentColor' }}
+                        fontSize={12}
+                        tickFormatter={formatDayLabel}
+                      />
                       <YAxis
                         domain={[0, (dataMax) => Math.ceil((dataMax || 0) / 1000) * 1000 || 1000]}
                         ticks={(() => {
@@ -1250,6 +1260,7 @@ function App() {
                       />
                       <Tooltip
                         contentStyle={{ background: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 8 }}
+                        labelFormatter={formatDayLabel}
                         formatter={(v) => [`$${v?.toLocaleString?.() ?? v}`, 'Spend']}
                       />
                       <Line type="monotone" dataKey="spend" stroke="var(--accent)" strokeWidth={2} dot={{ fill: 'var(--accent)' }} />
@@ -1831,7 +1842,12 @@ function App() {
                   <ResponsiveContainer width="100%" height={240}>
                     <LineChart data={Array.isArray(spendTrend) ? spendTrend : []}>
                       <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" tick={{ fill: 'currentColor' }} fontSize={11} />
+                      <XAxis
+                        dataKey="date"
+                        tick={{ fill: 'currentColor' }}
+                        fontSize={11}
+                        tickFormatter={formatDayLabel}
+                      />
                       <YAxis
                         domain={[0, (dataMax) => Math.ceil((dataMax || 0) / 1000) * 1000 || 1000]}
                         ticks={(() => {
@@ -1846,7 +1862,11 @@ function App() {
                         fontSize={11}
                         tickFormatter={(v) => `$${v / 1000}k`}
                       />
-                      <Tooltip contentStyle={{ background: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 8 }} formatter={(v) => [`$${v?.toLocaleString?.() ?? v}`, 'Spend']} />
+                      <Tooltip
+                        contentStyle={{ background: 'var(--tooltip-bg)', border: '1px solid var(--tooltip-border)', borderRadius: 8 }}
+                        labelFormatter={formatDayLabel}
+                        formatter={(v) => [`$${v?.toLocaleString?.() ?? v}`, 'Spend']}
+                      />
                       <Line type="monotone" dataKey="spend" stroke="var(--accent)" strokeWidth={2} dot={{ fill: 'var(--accent)' }} />
                     </LineChart>
                   </ResponsiveContainer>
