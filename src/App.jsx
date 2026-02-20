@@ -690,6 +690,16 @@ function App() {
     return { spendTodayByAccount: byAccount, totalSpendToday: Math.round(total * 100) / 100 }
   }, [spendTodayData?.campaigns, spendData?.campaigns, todayStr, filterAccount, filterProduct, filterModel, filterMarket])
 
+  // Si la BDD est en retard sur le jour courant, on force le point "today" du trend
+  // à utiliser le spend live (spend-today) pour éviter un graphe incohérent.
+  const spendTrendForChart = useMemo(() => {
+    const base = Array.isArray(spendTrend) ? spendTrend : []
+    if (!base.length) return base
+    if (totalSpendToday == null) return base
+    if (!base.some((p) => p?.date === todayStr)) return base
+    return base.map((p) => (p?.date === todayStr ? { ...p, spend: totalSpendToday } : p))
+  }, [spendTrend, todayStr, totalSpendToday])
+
   const totalDailyBudget = useMemo(() => {
     if (filteredSpendByAccount.length) {
       return filteredSpendByAccount.reduce((s, a) => s + (a.dailyBudget || 0), 0)
@@ -1234,9 +1244,9 @@ function App() {
             <div className="charts-grid">
               <section className="chart-section">
                 <h3>Spend Trend {dateRange === 'custom' ? `(${dateFrom} → ${dateTo})` : dateRange === 'full' ? '(Full)' : `(${spendTrendDays} days)`}</h3>
-                <div className="chart-wrapper" key={`trend-${totalSpend}-${(spendTrend || []).length}`}>
+                <div className="chart-wrapper" key={`trend-${totalSpend}-${(spendTrendForChart || []).length}`}>
                   <ResponsiveContainer width="100%" height={280}>
-                    <LineChart data={Array.isArray(spendTrend) ? spendTrend : []}>
+                    <LineChart data={Array.isArray(spendTrendForChart) ? spendTrendForChart : []}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis
                         dataKey="date"
@@ -1247,7 +1257,7 @@ function App() {
                       <YAxis
                         domain={[0, (dataMax) => Math.ceil((dataMax || 0) / 1000) * 1000 || 1000]}
                         ticks={(() => {
-                          const max = Math.max(0, ...(spendTrend || []).map((d) => d.spend || 0))
+                          const max = Math.max(0, ...(spendTrendForChart || []).map((d) => d.spend || 0))
                           const yMax = Math.ceil(max / 1000) * 1000 || 1000
                           const step = Math.ceil(yMax / 5 / 1000) * 1000 || 1000
                           const t = []
@@ -1838,9 +1848,9 @@ function App() {
             <div className="general-grid">
               <section className="chart-section general-chart">
                 <h3>Évolution du spend</h3>
-                <div className="chart-wrapper" key={`general-trend-${totalSpendGeneral}-${(spendTrend || []).length}`}>
+                <div className="chart-wrapper" key={`general-trend-${totalSpendGeneral}-${(spendTrendForChart || []).length}`}>
                   <ResponsiveContainer width="100%" height={240}>
-                    <LineChart data={Array.isArray(spendTrend) ? spendTrend : []}>
+                    <LineChart data={Array.isArray(spendTrendForChart) ? spendTrendForChart : []}>
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis
                         dataKey="date"
@@ -1851,7 +1861,7 @@ function App() {
                       <YAxis
                         domain={[0, (dataMax) => Math.ceil((dataMax || 0) / 1000) * 1000 || 1000]}
                         ticks={(() => {
-                          const max = Math.max(0, ...(spendTrend || []).map((d) => d.spend || 0))
+                          const max = Math.max(0, ...(spendTrendForChart || []).map((d) => d.spend || 0))
                           const yMax = Math.ceil(max / 1000) * 1000 || 1000
                           const step = Math.ceil(yMax / 5 / 1000) * 1000 || 1000
                           const t = []
