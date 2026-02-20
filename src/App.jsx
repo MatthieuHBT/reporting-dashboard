@@ -44,6 +44,13 @@ import './App.css'
 
 const CAMPAIGN_DAILY_GOAL_PREFIX = 'vp_campaign_daily_goal_'
 
+function getMarketFromCampaignName(name) {
+  const s = String(name || '').toUpperCase()
+  // Ex: "CBO_BG_...", "[NEW]_CBO_BG_...", "CBO _HR_..."
+  const m = s.match(/(?:CBO|ABO)\s*[_\-\s]*([A-Z]{2,3})\s*_/)
+  return m?.[1] || ''
+}
+
 const SIDEBAR_SECTIONS = [
   {
     title: 'General',
@@ -95,6 +102,7 @@ function App() {
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'))
   const [filterProduct, setFilterProduct] = useState('')
   const [filterModel, setFilterModel] = useState('')
+  const [filterMarket, setFilterMarket] = useState('')
   const [filterAccount, setFilterAccount] = useState('')
   const [winnersSortBy, setWinnersSortBy] = useState('spend')
   const [winnersSortDir, setWinnersSortDir] = useState('desc') // desc = meilleur en premier
@@ -355,8 +363,10 @@ function App() {
     if (spendData?.campaigns?.length) {
       let campaigns = [...spendData.campaigns]
       const getProductKey = (c) => c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
+      if (filterAccount) campaigns = campaigns.filter((c) => (c.accountName || c.accountId) === filterAccount)
       if (filterProduct) campaigns = campaigns.filter((c) => getProductKey(c) === filterProduct)
       if (filterModel) campaigns = campaigns.filter((c) => extractModel(c.accountName || '') === filterModel)
+      if (filterMarket) campaigns = campaigns.filter((c) => String(c.codeCountry || 'Unknown').toUpperCase() === String(filterMarket).toUpperCase())
 
       const budgetByKey = {}
       for (const b of spendData.byAccount || []) {
@@ -424,7 +434,7 @@ function App() {
           return { date: label, spend: Math.round(spend * 100) / 100 }
         })
       const allProds = [...new Set(campaigns.map((c) => getProductKey(c)).filter(Boolean))].sort()
-      const allMkts = [...new Set(spendData.campaigns.map((c) => c.codeCountry || '').filter(Boolean))].sort()
+      const allMkts = [...new Set(spendData.campaigns.map((c) => (c.codeCountry || 'Unknown')).filter(Boolean))].sort()
       const allAccounts = spendData.accounts?.length ? spendData.accounts : [...new Set(spendData.campaigns.map((c) => c.accountName || '').filter(Boolean))].sort()
       const byCampaign = {}
       for (const r of campaigns) {
@@ -488,7 +498,7 @@ function App() {
       allAccounts: [],
       rawCampaigns: [],
     }
-  }, [spendData, filterProduct, filterModel, filterAccount, spendTrendDays])
+  }, [spendData, filterProduct, filterModel, filterAccount, filterMarket, spendTrendDays])
 
   const marketOptions = allMarkets || []
   const productOptions = allProducts || []
@@ -498,10 +508,7 @@ function App() {
   const filteredWinners = useMemo(() => {
     const rawList = winnersData?.winners || []
     let list = [...rawList]
-    if (filterAccount) {
-      const mkt = extractMarketFromAccountName(filterAccount)
-      if (mkt) list = list.filter((r) => (r.market || '').toUpperCase() === mkt)
-    }
+    if (filterMarket) list = list.filter((r) => String(r.market || '').toUpperCase() === String(filterMarket).toUpperCase())
     if (filterProduct) list = list.filter((r) => r.product === filterProduct)
     const minSpend = Number(winnersMinSpend) || 0
     if (minSpend > 0) list = list.filter((r) => (parseFloat(r.spend) || 0) >= minSpend)
@@ -522,7 +529,7 @@ function App() {
       return mult * String(va).localeCompare(String(vb), undefined, { numeric: true })
     })
     return list.map((r, i) => ({ ...r, rank: i + 1 }))
-  }, [winnersData, filterAccount, filterProduct, winnersMinSpend, winnersSortBy, winnersSortDir])
+  }, [winnersData, filterMarket, filterProduct, winnersMinSpend, winnersSortBy, winnersSortDir])
 
   const handleWinnersSort = (col) => {
     if (winnersSortBy === col) setWinnersSortDir((d) => (d === 'desc' ? 'asc' : 'desc'))
@@ -567,16 +574,16 @@ function App() {
   )
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const { spendTodayByAccount, totalSpendToday } = useMemo(() => {
-    const selectedMkt = filterAccount ? (extractMarketFromAccountName(filterAccount) || '').toUpperCase() : ''
     const getProductKey = (c) => c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
 
     const isIncluded = (c) => {
       if (!c) return false
+      if (filterAccount && (c.accountName || c.accountId) !== filterAccount) return false
       if (filterProduct && getProductKey(c) !== filterProduct) return false
       if (filterModel && extractModel(c.accountName || '') !== filterModel) return false
-      if (selectedMkt) {
-        const code = String(c.codeCountry || parseAdName(c.campaignName || '').codeCountry || '').toUpperCase()
-        if (!code || code !== selectedMkt) return false
+      if (filterMarket) {
+        const code = String(c.codeCountry || 'Unknown').toUpperCase()
+        if (code !== String(filterMarket).toUpperCase()) return false
       }
       return true
     }
@@ -594,7 +601,7 @@ function App() {
       total += c.spend || 0
     }
     return { spendTodayByAccount: byAccount, totalSpendToday: Math.round(total * 100) / 100 }
-  }, [spendTodayData?.campaigns, spendData?.campaigns, todayStr, filterAccount, filterProduct, filterModel])
+  }, [spendTodayData?.campaigns, spendData?.campaigns, todayStr, filterAccount, filterProduct, filterModel, filterMarket])
 
   const totalDailyBudget = useMemo(() => {
     if (filteredSpendByAccount.length) {
@@ -778,6 +785,11 @@ function App() {
                     <tbody>
                       {budgetsList
                         .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                        .filter((b) => {
+                          if (!filterMarket) return true
+                          const m = getMarketFromCampaignName(b.campaignName) || 'Unknown'
+                          return m.toUpperCase() === String(filterMarket).toUpperCase()
+                        })
                         .sort((a, b) => (b.dailyBudget || b.lifetimeBudget / 30) - (a.dailyBudget || a.lifetimeBudget / 30))
                         .map((b) => {
                           const spend = spendByCampaignId[b.campaignId]
@@ -1009,10 +1021,16 @@ function App() {
                 </div>
                 <div className="filter-group">
                   <Filter size={16} />
-                  <select id="filter-account-spend" name="filterAccount" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account (market)">
+                  <select id="filter-account-spend" name="filterAccount" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account">
                     <option value="">All ad accounts</option>
                     {accountOptions.map((a) => (
                       <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                  <select id="filter-market-spend" name="filterMarket" value={filterMarket} onChange={(e) => setFilterMarket(e.target.value)} title="Market (via naming)">
+                    <option value="">All markets</option>
+                    {marketOptions.map((m) => (
+                      <option key={m} value={m}>{m}</option>
                     ))}
                   </select>
                   <select id="filter-product-spend" name="filterProduct" value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
@@ -1314,6 +1332,12 @@ function App() {
                       <option key={a} value={a}>{a}</option>
                     ))}
                   </select>
+                  <select id="filter-market-budget" name="filterMarket" value={filterMarket} onChange={(e) => setFilterMarket(e.target.value)} title="Market (via naming)">
+                    <option value="">All markets</option>
+                    {marketOptions.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
                 </div>
                 {dbMode && (
                   <button
@@ -1350,6 +1374,11 @@ function App() {
                     <tbody>
                       {budgetsList
                         .filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0)
+                        .filter((b) => {
+                          if (!filterMarket) return true
+                          const m = getMarketFromCampaignName(b.campaignName) || 'Unknown'
+                          return m.toUpperCase() === String(filterMarket).toUpperCase()
+                        })
                         .sort((a, b) => (b.dailyBudget || b.lifetimeBudget / 30) - (a.dailyBudget || a.lifetimeBudget / 30))
                         .map((b) => {
                           const spend = spendByCampaignId[b.campaignId]
@@ -1433,10 +1462,16 @@ function App() {
                     </button>
                   )}
                   <Filter size={16} />
-                  <select id="filter-account-winners" name="filterAccountWinners" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account (market)">
+                  <select id="filter-account-winners" name="filterAccountWinners" value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} title="Ad Account">
                     <option value="">All ad accounts</option>
                     {accountOptions.map((a) => (
                       <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                  <select id="filter-market-winners" name="filterMarketWinners" value={filterMarket} onChange={(e) => setFilterMarket(e.target.value)} title="Market (via naming)">
+                    <option value="">All markets</option>
+                    {marketOptions.map((m) => (
+                      <option key={m} value={m}>{m}</option>
                     ))}
                   </select>
                   <select id="filter-product-winners" name="filterProductWinners" value={filterProduct} onChange={(e) => setFilterProduct(e.target.value)} title="Product">
