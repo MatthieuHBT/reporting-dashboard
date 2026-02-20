@@ -36,9 +36,11 @@ export async function countCampaigns(since = null, until = null) {
 
 export async function getCampaigns(since, until, accountName = null) {
   guard()
-  // accountName = filtre "market" : on garde les campagnes dont le NOM indique ce market (CBO_MX_, CBO_IT_, etc.)
-  // inclut les campagnes de tous les comptes (ex: CBO_MX_ sur compte IT → visibles quand on filtre MX)
-  const market = accountName ? extractMarketFromAccount(accountName) : null
+  // IMPORTANT:
+  // - Si accountName est un vrai nom de compte Meta (ex: "VELUNAPETS BG COD $"), on filtre EXACTEMENT sur account_name.
+  // - Le filtre "market" (regex sur campaign_name) n'est utilisé que si l'utilisateur passe un code court (ex: "BG", "IT").
+  const raw = typeof accountName === 'string' ? accountName.trim() : ''
+  const market = raw && /^[A-Za-z]{2,3}$/.test(raw) ? raw.toUpperCase() : null
   const namePattern = market ? `^(CBO|ABO)_${market}_` : null
 
   let rows
