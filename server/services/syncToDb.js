@@ -107,7 +107,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     for (const acc of accounts) {
       try {
         console.log(`[runFullSync] Account ${acc.name} (${acc.id})...`)
-        const insights = await fetchMetaData(accessToken, `/${acc.id}/insights`, {
+        const insights = await fetchMetaDataAllPages(accessToken, `/${acc.id}/insights`, {
           fields: 'spend,impressions,clicks,campaign_name,campaign_id',
           level: 'campaign',
           time_increment: 1,
