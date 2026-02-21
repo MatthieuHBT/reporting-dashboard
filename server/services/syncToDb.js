@@ -14,6 +14,7 @@ const FULL_SINCE = '2025-01-01'
 const FIRST_SYNC_DAYS = 30
 // Winners-only sync: garder petit pour éviter timeouts
 const WINNERS_MAX_DAYS = 14
+const CAMPAIGNS_BACKFILL_DAYS = 2
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -48,11 +49,12 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       const nextSince = addDays(lastUntil, 1)
       if (nextSince > until) {
         alreadyUpToDate = true
-        skipCampaignsSync = true
-        // Plage minimale pour éviter des appels inutiles, tout en permettant la sync budgets.
-        since = until
-        incremental = false
-        console.log('[runFullSync] Déjà à jour (campaigns). On sync quand même les budgets.', { since, until })
+        // Même "à jour", on resync les 2 derniers jours (Meta peut finaliser les chiffres avec retard)
+        skipCampaignsSync = false
+        const backfillStart = addDays(until, -(CAMPAIGNS_BACKFILL_DAYS - 1))
+        since = backfillStart
+        incremental = true
+        console.log('[runFullSync] À jour (campaigns) → backfill derniers jours', { since, until })
         // Si la table campaigns est vide (ou a été vidée), on force une resync "first sync" (30j)
         try {
           const todayCount = await db.countCampaigns(until, until)
@@ -67,7 +69,8 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
         }
       }
       if (nextSince <= until) {
-        since = nextSince
+        const backfillStart = addDays(until, -(CAMPAIGNS_BACKFILL_DAYS - 1))
+        since = nextSince < backfillStart ? nextSince : backfillStart
         incremental = true
         console.log('[runFullSync] Mode incrémental:', { since, until })
       }
