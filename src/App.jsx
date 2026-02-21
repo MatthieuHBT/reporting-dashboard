@@ -696,8 +696,19 @@ function App() {
     const base = Array.isArray(spendTrend) ? spendTrend : []
     if (!base.length) return base
     if (totalSpendToday == null) return base
-    if (!base.some((p) => p?.date === todayStr)) return base
-    return base.map((p) => (p?.date === todayStr ? { ...p, spend: totalSpendToday } : p))
+    // 1) cas ISO (normal): override sur la date du jour
+    if (base.some((p) => String(p?.date || '').slice(0, 10) === todayStr)) {
+      return base.map((p) => (String(p?.date || '').slice(0, 10) === todayStr ? { ...p, spend: totalSpendToday } : p))
+    }
+    // 2) fallback: si la dernière étiquette correspond à "aujourd'hui" (ex: "20 Feb"), override le dernier point
+    const lastIdx = base.length - 1
+    const last = base[lastIdx]
+    const todayLabel = formatDayLabel(todayStr)
+    const lastLabel = formatDayLabel(last?.date)
+    if (lastIdx >= 0 && lastLabel === todayLabel) {
+      return base.map((p, i) => (i === lastIdx ? { ...p, spend: totalSpendToday } : p))
+    }
+    return base
   }, [spendTrend, todayStr, totalSpendToday])
 
   const totalDailyBudget = useMemo(() => {
