@@ -22,6 +22,7 @@ const { sql } = await import('./index.js')
 try {
 await sql`
   CREATE TABLE IF NOT EXISTS campaign_budgets (
+    workspace_id UUID NOT NULL,
     account_id VARCHAR(100) NOT NULL,
     account_name VARCHAR(255),
     campaign_id VARCHAR(100) NOT NULL,
@@ -31,9 +32,10 @@ await sql`
     effective_status VARCHAR(50),
     has_active_ads BOOLEAN,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    PRIMARY KEY (account_id, campaign_id)
+    PRIMARY KEY (workspace_id, account_id, campaign_id)
   )
 `
+  await sql`ALTER TABLE campaign_budgets ADD COLUMN IF NOT EXISTS workspace_id UUID`
   await sql`ALTER TABLE campaign_budgets ADD COLUMN IF NOT EXISTS effective_status VARCHAR(50)`
   await sql`ALTER TABLE campaign_budgets ADD COLUMN IF NOT EXISTS has_active_ads BOOLEAN`
   console.log('✓ Table campaign_budgets créée')

@@ -14,6 +14,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, 'data')
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-prod'
 
+/** Wrapper pour que les erreurs async soient passées au handler d'erreur (réponse toujours JSON pour /api) */
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
+}
+
 /** Calcule since/until (YYYY-MM-DD) depuis datePreset ou since/until query */
 function getDateRange(datePreset, since, until) {
   if (since && until) return { since, until }
@@ -42,12 +47,12 @@ function getDateRange(datePreset, since, until) {
 }
 
 /** Enrichit une réponse spend avec les budgets Neon (si DB configurée) */
-async function enrichSpendWithBudgets(payload, range) {
+async function enrichSpendWithBudgets(payload, range, workspaceId) {
   if (!hasDb()) return
   try {
     const dbBudgets = await import('./db/budgets.js')
-    const budgetByAccount = await dbBudgets.getBudgetsByAccount()
-    const totalDailyBudgetAll = await dbBudgets.getTotalDailyBudget()
+    const budgetByAccount = await dbBudgets.getBudgetsByAccount(workspaceId)
+    const totalDailyBudgetAll = await dbBudgets.getTotalDailyBudget(workspaceId)
     const daysInRange = getDaysInRange(range?.since, range?.until)
     const byAccountList = (payload.byAccount || []).map((a) => {
       const key = a.accountName || a.accountId
@@ -75,12 +80,13 @@ function getDaysInRange(since, until) {
 }
 
 /** Récupère tous les ad accounts Meta (y compris sans campagnes) et les fusionne avec la liste existante */
-async function mergeAllAdAccounts(existingAccounts = []) {
-  let token = process.env.META_ACCESS_TOKEN
-  if (!token && hasDb()) {
+async function mergeAllAdAccounts(existingAccounts = [], workspaceId) {
+  // En mode SaaS (DB), on utilise le token du workspace (évite mélange entre comptes).
+  let token = null
+  if (hasDb()) {
     try {
       const { getMetaToken } = await import('./db/settings.js')
-      token = await getMetaToken()
+      token = await getMetaToken(workspaceId)
     } catch {}
   }
   if (!token) return existingAccounts
@@ -106,7 +112,7 @@ function filterByDateRange(items, since, until, dateKey = 'date') {
 }
 
 const app = express()
-const PORT = process.env.PORT || 3003
+const PORT = process.env.PORT || 3001
 
 const corsOrigins = [
   'http://localhost:3002', 'http://localhost:3004', 'http://localhost:3005',
@@ -116,8 +122,20 @@ if (process.env.VERCEL_URL) {
   corsOrigins.push(`https://${process.env.VERCEL_URL}`, `https://www.${process.env.VERCEL_URL}`)
 }
 if (process.env.FRONTEND_URL) corsOrigins.push(process.env.FRONTEND_URL)
-app.use(cors({ origin: corsOrigins }))
+app.use(cors({
+  origin: corsOrigins,
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Workspace-Id'],
+  optionsSuccessStatus: 204,
+}))
 app.use(express.json())
+
+// SaaS groundwork: workspace selector (header only, no enforcement yet)
+app.use((req, _res, next) => {
+  const ws = req.headers['x-workspace-id']
+  req.workspaceId = typeof ws === 'string' && ws.trim() ? ws.trim() : null
+  next()
+})
 
 // Vercel: restore original path (rewrite sends /api/xxx → /api?__originalPath=xxx)
 app.use((req, res, next) => {
@@ -164,7 +182,7 @@ app.get('/api/auth/status', (req, res) => {
 })
 
 // Auth DB (Neon) : login / logout
-app.post('/api/auth/db/login', async (req, res) => {
+app.post('/api/auth/db/login', asyncHandler(async (req, res) => {
   if (!hasDb()) {
     return res.status(503).json({ error: 'Database not configured (DATABASE_URL)' })
   }
@@ -179,22 +197,101 @@ app.post('/api/auth/db/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' })
     }
     const pages = await getUserPages(user.id)
+    // SaaS: default workspace for user
+    let workspaces = []
+    try {
+      const { ensureDefaultWorkspaceForUser, listWorkspacesForUser } = await import('./db/workspaces.js')
+      await ensureDefaultWorkspaceForUser(user.id, user.name)
+      workspaces = await listWorkspacesForUser(user.id)
+    } catch (wsErr) {
+      console.warn('[login] workspaces:', wsErr?.message)
+      workspaces = []
+    }
+    const defaultWorkspaceId = workspaces?.[0]?.id || null
     const token = jwt.sign(
-      { id: user.id, email: user.email },
+      { id: user.id, email: user.email, workspaceId: defaultWorkspaceId },
       JWT_SECRET,
       { expiresIn: '7d' }
     )
     res.json({
       token,
-      user: { id: user.id, email: user.email, name: user.name, role: user.role, pages },
+      user: { id: user.id, email: user.email, name: user.name, role: user.role, pages, workspaces },
+    })
+  } catch (err) {
+    console.error('[login]', err)
+    const hint = /does not exist|relation .* does not exist/i.test(String(err?.message || ''))
+      ? 'Run: cd server && npm run db:migrate'
+      : undefined
+    res.status(500).json({ error: err.message || 'Login failed', ...(hint && { hint }) })
+  }
+}))
+
+// Signup DB (Neon) : création user + retour token
+app.post('/api/auth/db/signup', asyncHandler(async (req, res) => {
+  if (!hasDb()) {
+    return res.status(503).json({ error: 'Database not configured (DATABASE_URL)' })
+  }
+  try {
+    const { findUserByEmail, createUser, getUserPages } = await import('./db/auth.js')
+    const { sql } = await import('./db/index.js')
+    const email = String(req.body?.email || '').trim()
+    const password = String(req.body?.password || '')
+    const name = String(req.body?.name || '').trim()
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password required' })
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' })
+    }
+    const existing = await findUserByEmail(email)
+    if (existing) {
+      return res.status(409).json({ error: 'Email already exists' })
+    }
+
+    const [{ count }] = await sql`SELECT COUNT(*)::int AS count FROM users`
+    const isFirstUser = (count || 0) === 0
+    const role = isFirstUser ? 'admin' : 'team'
+    const defaultPages = role === 'admin' ? [] : ['general', 'spend', 'budget', 'winners', 'stock']
+    const user = await createUser({
+      email,
+      password,
+      name: name || email.split('@')[0],
+      role,
+      pages: defaultPages,
+    })
+    const pages = await getUserPages(user.id)
+
+    // SaaS groundwork: attach user to a default workspace (backward-compatible if not migrated)
+    let workspaces = []
+    try {
+      const { ensureDefaultWorkspaceForUser, listWorkspacesForUser } = await import('./db/workspaces.js')
+      await ensureDefaultWorkspaceForUser(user.id, user.name)
+      workspaces = await listWorkspacesForUser(user.id)
+    } catch {
+      workspaces = []
+    }
+    const defaultWorkspaceId = workspaces?.[0]?.id || null
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, workspaceId: defaultWorkspaceId },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    )
+    res.status(201).json({
+      token,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role, pages, workspaces },
     })
   } catch (err) {
     console.error(err)
-    res.status(500).json({ error: err.message || 'Login failed' })
+    const hint = /does not exist|relation .* does not exist/i.test(String(err?.message || ''))
+      ? 'Run migrations: cd server && npm run db:migrate'
+      : undefined
+    res.status(500).json({ error: err.message || 'Signup failed', ...(hint && { hint }) })
   }
-})
+}))
 
-function requireDbUser(req, res, next) {
+async function requireDbUser(req, res, next) {
   const auth = req.headers.authorization
   const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null
   if (!token) {
@@ -203,6 +300,53 @@ function requireDbUser(req, res, next) {
   try {
     const payload = jwt.verify(token, JWT_SECRET)
     req.user = payload
+    // Workspace: header > JWT claim > default membership
+    const headerWs = req.headers['x-workspace-id']
+    const explicitWs = typeof headerWs === 'string' && headerWs.trim() ? headerWs.trim() : null
+    const jwtWs = payload?.workspaceId ? String(payload.workspaceId) : null
+    let candidateWs = explicitWs || jwtWs || null
+
+    // Sécurité multi-tenant: si un workspaceId est fourni, vérifier la membership.
+    // Sinon un user pourrait réutiliser un ancien X-Workspace-Id (localStorage) et voir des données d'un autre compte.
+    if (candidateWs && hasDb()) {
+      try {
+        const { sql } = await import('./db/index.js')
+        const isMember = async (wsId) => {
+          const rows = await sql`
+            SELECT 1
+            FROM workspace_members
+            WHERE workspace_id = ${String(wsId)}
+              AND user_id = ${String(payload.id)}
+            LIMIT 1
+          `
+          return rows?.length > 0
+        }
+
+        if (!(await isMember(candidateWs))) {
+          // Si le header est invalide, tenter le workspace du JWT; sinon fallback.
+          if (explicitWs && jwtWs && explicitWs !== jwtWs && (await isMember(jwtWs))) {
+            candidateWs = jwtWs
+          } else {
+            candidateWs = null
+          }
+        }
+      } catch {
+        // Si la DB n'a pas encore les tables SaaS, on conserve le comportement existant.
+      }
+    }
+
+    req.workspaceId = candidateWs
+    if (!req.workspaceId && hasDb()) {
+      try {
+        const { findUserByEmail } = await import('./db/auth.js')
+        const { ensureDefaultWorkspaceForUser } = await import('./db/workspaces.js')
+        const user = await findUserByEmail(req.user.email)
+        if (user) {
+          const ws = await ensureDefaultWorkspaceForUser(user.id, user.name)
+          req.workspaceId = ws?.id ? String(ws.id) : null
+        }
+      } catch {}
+    }
     next()
   } catch {
     res.status(401).json({ error: 'Invalid or expired token' })
@@ -215,8 +359,91 @@ app.get('/api/auth/db/me', requireDbUser, async (req, res) => {
     const user = await findUserByEmail(req.user.email)
     if (!user) return res.status(401).json({ error: 'User not found' })
     const pages = await getUserPages(user.id)
-    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, pages } })
+    let workspaces = []
+    try {
+      const { listWorkspacesForUser } = await import('./db/workspaces.js')
+      workspaces = await listWorkspacesForUser(user.id)
+    } catch {}
+    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, pages, workspaces } })
   } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Workspaces (SaaS)
+app.get('/api/workspaces', requireDbUser, async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  try {
+    const { findUserByEmail } = await import('./db/auth.js')
+    const { listWorkspacesForUser } = await import('./db/workspaces.js')
+    const user = await findUserByEmail(req.user.email)
+    if (!user) return res.status(401).json({ error: 'User not found' })
+    const workspaces = await listWorkspacesForUser(user.id)
+    res.json({ workspaces })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/workspaces', requireDbUser, async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  try {
+    const { findUserByEmail } = await import('./db/auth.js')
+    const { createWorkspace } = await import('./db/workspaces.js')
+    const user = await findUserByEmail(req.user.email)
+    if (!user) return res.status(401).json({ error: 'User not found' })
+    const name = String(req.body?.name || '').trim()
+    if (!name) return res.status(400).json({ error: 'Workspace name required' })
+    const ws = await createWorkspace({ name, ownerUserId: user.id })
+    res.status(201).json({ workspace: ws })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Workspace members (current workspace from X-Workspace-Id)
+app.get('/api/workspace/members', requireDbUser, async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  if (!req.workspaceId) return res.status(400).json({ error: 'Select a workspace first' })
+  try {
+    const { listWorkspaceMembers } = await import('./db/workspaces.js')
+    const members = await listWorkspaceMembers(req.workspaceId)
+    res.json({ members })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.post('/api/workspace/members', requireDbUser, requireWorkspaceOwner, async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  if (!req.workspaceId) return res.status(400).json({ error: 'Select a workspace first' })
+  try {
+    const { findUserByEmail } = await import('./db/auth.js')
+    const { addWorkspaceMember, getWorkspaceRole } = await import('./db/workspaces.js')
+    const email = String(req.body?.email || '').trim().toLowerCase()
+    const role = (req.body?.role === 'admin' || req.body?.role === 'owner') ? req.body.role : 'member'
+    if (!email) return res.status(400).json({ error: 'Email required' })
+    const user = await findUserByEmail(email)
+    if (!user) return res.status(404).json({ error: 'User not found. They must sign up first.' })
+    const existing = await getWorkspaceRole(req.workspaceId, user.id)
+    if (existing) return res.status(400).json({ error: 'User is already a member of this workspace' })
+    await addWorkspaceMember(req.workspaceId, user.id, role)
+    res.status(201).json({ success: true, user: { id: user.id, email: user.email, name: user.name, role } })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/workspace/members/:userId', requireDbUser, requireWorkspaceOwner, async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  if (!req.workspaceId) return res.status(400).json({ error: 'Select a workspace first' })
+  try {
+    const { removeWorkspaceMember } = await import('./db/workspaces.js')
+    const userId = String(req.params.userId)
+    await removeWorkspaceMember(req.workspaceId, userId)
+    res.json({ success: true })
+  } catch (err) {
+    if (err.message?.includes('last owner')) return res.status(400).json({ error: err.message })
     res.status(500).json({ error: err.message })
   }
 })
@@ -235,24 +462,49 @@ async function requireDbAdmin(req, res, next) {
   }
 }
 
-// Settings: Meta token stocké en BDD (admin only)
+async function requireWorkspaceOwner(req, res, next) {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  if (!req.workspaceId) return res.status(400).json({ error: 'workspaceId required' })
+  try {
+    const { findUserByEmail } = await import('./db/auth.js')
+    const user = await findUserByEmail(req.user.email)
+    if (!user) return res.status(401).json({ error: 'User not found' })
+    if (user.role === 'admin') return next()
+
+    const { getWorkspaceRole } = await import('./db/workspaces.js')
+    const role = await getWorkspaceRole(req.workspaceId, user.id)
+    if (role !== 'owner' && role !== 'admin') {
+      return res.status(403).json({ error: 'Workspace owner required' })
+    }
+    next()
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}
+
+// Settings: Meta token + onboarding (first sync done)
 app.get('/api/settings/meta-token', requireDbUser, async (req, res) => {
   if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
   try {
     const { getMetaToken } = await import('./db/settings.js')
-    const token = await getMetaToken()
-    res.json({ configured: !!token })
+    const token = await getMetaToken(req.workspaceId)
+    let firstSyncDone = false
+    if (req.workspaceId) {
+      const { hasSuccessfulSync } = await import('./db/spend.js')
+      firstSyncDone = await hasSuccessfulSync(req.workspaceId)
+    }
+    res.json({ configured: !!token, firstSyncDone })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-app.post('/api/settings/meta-token', requireDbUser, requireDbAdmin, async (req, res) => {
+app.post('/api/settings/meta-token', requireDbUser, requireWorkspaceOwner, async (req, res) => {
   if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
   try {
     const { setMetaToken } = await import('./db/settings.js')
     const token = (req.body?.token || '').trim() || null
-    await setMetaToken(token)
+    await setMetaToken(req.workspaceId, token)
     res.json({ success: true, configured: !!token })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -260,27 +512,26 @@ app.post('/api/settings/meta-token', requireDbUser, requireDbAdmin, async (req, 
 })
 
 // Test Meta token (admin): vérifie que le token fonctionne avec l'API Meta
-app.post('/api/settings/meta-token/test', requireDbUser, requireDbAdmin, async (req, res) => {
-  let metaToken = process.env.META_ACCESS_TOKEN || null
-  if (!metaToken && hasDb()) {
-    try {
-      const { getMetaToken } = await import('./db/settings.js')
-      metaToken = await getMetaToken()
-    } catch {}
-  }
+app.post('/api/settings/meta-token/test', requireDbUser, requireWorkspaceOwner, async (req, res) => {
+  // SaaS: test uniquement le token stocké en BDD pour ce workspace
+  let metaToken = null
+  try {
+    const { getMetaToken } = await import('./db/settings.js')
+    metaToken = await getMetaToken(req.workspaceId)
+  } catch {}
   if (!metaToken) {
-    return res.status(400).json({ error: 'Aucun token Meta configuré. Enregistre un token dans les Settings ou définis META_ACCESS_TOKEN.' })
+    return res.status(400).json({ error: 'No Meta token configured for this workspace. Set one in Settings.' })
   }
   try {
     const data = await fetchMetaData(metaToken, '/me/adaccounts', { fields: 'id,name', limit: 1 })
     const count = (data.data || []).length
-    res.json({ ok: true, message: `Token valide — ${count} ad account(s) accessible(s).`, accountsCount: count })
+    res.json({ ok: true, message: `Token is valid — ${count} ad account(s) accessible.`, accountsCount: count })
   } catch (err) {
     const is190 = err.status === 401
     res.status(400).json({
-      error: err.message || 'Échec de la connexion Meta',
+      error: err.message || 'Meta connection failed',
       hint: is190
-        ? 'Token expiré ou invalide. Génère un nouveau token dans Graph API Explorer (ads_management, ads_read, business_management).'
+        ? 'Token is expired or invalid. Generate a new token in Graph API Explorer (ads_management, ads_read, business_management).'
         : null,
     })
   }
@@ -306,12 +557,14 @@ app.post('/api/users', requireDbUser, requireDbAdmin, async (req, res) => {
     if (!email?.trim() || !password?.trim() || !name?.trim()) {
       return res.status(400).json({ error: 'Email, password and name required' })
     }
+    const normalizedRole = role || 'team'
+    const defaultPages = normalizedRole === 'admin' ? [] : ['general', 'spend', 'budget', 'winners', 'stock']
     const user = await createUser({
       email: email.trim(),
       password,
       name: name.trim(),
-      role: role || 'team',
-      pages: Array.isArray(pages) ? pages : ['spend'],
+      role: normalizedRole,
+      pages: Array.isArray(pages) ? pages : defaultPages,
     })
     const pagesRes = await (await import('./db/auth.js')).getUserPages(user.id)
     res.status(201).json({ id: user.id, email: user.email, name: user.name, role: user.role, pages: pagesRes })
@@ -356,20 +609,23 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
     bodyKeys: Object.keys(req.body || {}),
   })
   
-  let metaToken = req.body?.accessToken || process.env.META_ACCESS_TOKEN || storedToken
-  if (!metaToken && hasDb()) {
-    try {
-      const { getMetaToken } = await import('./db/settings.js')
-      metaToken = await getMetaToken()
-      console.log('[POST /api/refresh] Token récupéré depuis BDD:', !!metaToken)
-    } catch (e) {
-      console.warn('[POST /api/refresh] Erreur récupération token BDD:', e.message)
-    }
+  // SaaS: utiliser le token du workspace (évite mélange entre comptes).
+  // Optionnellement, un token peut être passé dans le body pour un run ponctuel.
+  let metaToken = null
+  try {
+    const { getMetaToken } = await import('./db/settings.js')
+    metaToken = await getMetaToken(req.workspaceId)
+    console.log('[POST /api/refresh] Token récupéré depuis BDD:', !!metaToken)
+  } catch (e) {
+    console.warn('[POST /api/refresh] Erreur récupération token BDD:', e.message)
+  }
+  if (!metaToken) {
+    metaToken = (req.body?.accessToken || '').trim() || null
   }
   
   if (!metaToken) {
     console.error('[POST /api/refresh] Aucun token Meta trouvé')
-    return res.status(400).json({ error: 'Configure Meta token in Settings (admin)' })
+    return res.status(400).json({ error: 'Configure your Meta token in Settings' })
   }
   
   if (!hasDb()) {
@@ -380,16 +636,18 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
   try {
     const forceFull = req.query.full === '1' || req.body?.full === true
     const skipAds = req.query.skipAds === '1' || req.body?.skipAds === true
+    const skipBudgets = req.query.skipBudgets === '1' || req.body?.skipBudgets === true
     const winnersOnly = req.query.winnersOnly === '1' || req.body?.winnersOnly === true
     const winnersDays = req.query.days ? parseInt(req.query.days, 10) : null
+    const campaignDays = req.query.campaignDays ? parseInt(req.query.campaignDays, 10) : null
     const accounts = Array.isArray(req.body?.accounts) ? req.body.accounts.filter(Boolean) : null
     const winnersFilters = req.body?.winnersFilters && typeof req.body.winnersFilters === 'object' ? req.body.winnersFilters : null
     
-    console.log('[POST /api/refresh] Options:', { forceFull, skipAds, winnersOnly, winnersDays, accountsCount: accounts?.length || 0, hasWinnersFilters: !!winnersFilters })
+    console.log('[POST /api/refresh] Options:', { forceFull, skipAds, skipBudgets, winnersOnly, winnersDays, campaignDays, accountsCount: accounts?.length || 0, hasWinnersFilters: !!winnersFilters })
     
     const { runFullSync } = await import('./services/syncToDb.js')
     console.log('[POST /api/refresh] Lancement runFullSync...')
-    const result = await runFullSync(metaToken, forceFull, skipAds, winnersOnly, winnersDays, accounts, winnersFilters)
+    const result = await runFullSync(metaToken, req.workspaceId, forceFull, skipAds, skipBudgets, winnersOnly, winnersDays, campaignDays, accounts, winnersFilters)
     console.log('[POST /api/refresh] Sync réussie:', {
       campaignsCount: result.campaignsCount,
       incremental: result.incremental,
@@ -407,11 +665,11 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
     
     let hint = null
     if (msg?.includes('timeout') || err?.code === 'ETIMEDOUT' || err?.code === 'ECONNRESET') {
-      hint = 'Sync trop longue (timeout). Essaie un sync rapide (Sync rapide) ou winners only.'
+      hint = 'Sync took too long (timeout). Try a quick sync or Winners-only.'
     } else if (err?.status === 401 || /invalid|expired|190|access token/i.test(msg)) {
-      hint = 'Token Meta expiré ou invalide. Va dans Settings → Tester le token, puis génère un nouveau token dans Graph API Explorer.'
+      hint = 'Meta token is expired or invalid. Go to Settings → Test token, then generate a new token in Graph API Explorer.'
     } else if (err?.code === 'ENOTFOUND' || err?.code === 'ECONNREFUSED') {
-      hint = 'Erreur de connexion réseau. Vérifie la connexion internet et que Meta API est accessible.'
+      hint = 'Network error. Check your internet connection and Meta API availability.'
     }
     
     if (!res.headersSent) {
@@ -441,17 +699,19 @@ app.get('/api/ad-accounts', requireAuth, async (req, res) => {
 })
 
 // Spend aujourd'hui en direct depuis Meta (pour afficher le spend du jour)
-app.get('/api/reports/spend-today', async (req, res) => {
+app.get('/api/reports/spend-today', requireDbUser, async (req, res) => {
   if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
-  let metaToken = process.env.META_ACCESS_TOKEN
-  if (!metaToken) {
-    try {
-      const { getMetaToken } = await import('./db/settings.js')
-      metaToken = await getMetaToken()
-    } catch {}
+  if (!req.workspaceId) {
+    return res.status(400).json({ error: 'Workspace required', campaigns: [], totalSpendToday: 0, byAccount: {} })
   }
+  // SaaS: token du workspace uniquement (pas de fallback .env, sinon mélange entre comptes)
+  let metaToken = null
+  try {
+    const { getMetaToken } = await import('./db/settings.js')
+    metaToken = await getMetaToken(req.workspaceId)
+  } catch {}
   if (!metaToken) {
-    return res.status(400).json({ error: 'Configure Meta token in Settings (admin)' })
+    return res.status(400).json({ error: 'Configure your Meta token in Settings' })
   }
   const today = new Date().toISOString().slice(0, 10)
   const timeRange = JSON.stringify({ since: today, until: today })
@@ -505,27 +765,49 @@ app.get('/api/reports/spend-today', async (req, res) => {
 })
 
 // Spend report: DB si configuré, sinon data/spend.json, sinon API Meta
-app.get('/api/reports/spend', async (req, res) => {
+app.get('/api/reports/spend', requireDbUser, asyncHandler(async (req, res) => {
   const { datePreset, since, until, account } = req.query
   const range = getDateRange(datePreset, since, until)
   const accountName = account || null
 
   if (hasDb()) {
+    if (!req.workspaceId) {
+      return res.status(400).json({
+        error: 'Workspace required',
+        campaigns: [],
+        byAccount: [],
+        byProduct: [],
+        byMarket: [],
+        totalSpend: 0,
+        accounts: [],
+        daysInRange: 0,
+        totalDailyBudget: 0,
+        totalBudgetPeriod: 0,
+        lastSyncAt: null,
+      })
+    }
     try {
       const dbSpend = await import('./db/spend.js')
-      const filteredCampaigns = await dbSpend.getCampaigns(range?.since, range?.until, accountName)
-      const fromDb = await dbSpend.getDistinctAccounts()
-      const allAccounts = await mergeAllAdAccounts(fromDb)
+      const filteredCampaigns = await dbSpend.getCampaigns(range?.since, range?.until, accountName, req.workspaceId)
+      const fromDb = await dbSpend.getDistinctAccounts(req.workspaceId)
+      const allAccounts = await mergeAllAdAccounts(fromDb, req.workspaceId)
+      let lastSyncAt = null
+      try {
+        const latest = await dbSpend.getLatestSyncRun(req.workspaceId)
+        lastSyncAt = latest?.synced_at ? new Date(latest.synced_at).toISOString() : null
+      } catch (_) {}
       let budgetByAccount = {}
       try {
         const dbBudgets = await import('./db/budgets.js')
-        budgetByAccount = await dbBudgets.getBudgetsByAccount()
+        budgetByAccount = await dbBudgets.getBudgetsByAccount(req.workspaceId)
       } catch (_) {}
       const byAccount = {}
       const byProduct = {}
       const byMarket = {}
       for (const r of filteredCampaigns) {
         const accKey = r.accountName || r.accountId
+        const marketFromAccount = extractMarketFromAccount(r.accountName || '')
+        const mktKey = (r.codeCountry && r.codeCountry.trim()) || marketFromAccount || 'Unknown'
         byAccount[accKey] = (byAccount[accKey] || { spend: 0, impressions: 0, budget: 0 })
         byAccount[accKey].spend += r.spend || 0
         byAccount[accKey].impressions += r.impressions || 0
@@ -537,7 +819,6 @@ app.get('/api/reports/spend', async (req, res) => {
         byProduct[prodKey].spend += r.spend || 0
         byProduct[prodKey].impressions += r.impressions || 0
         byProduct[prodKey].product = prodKey
-        const mktKey = r.codeCountry || 'Unknown'
         byMarket[mktKey] = (byMarket[mktKey] || { spend: 0 })
         byMarket[mktKey].spend += r.spend || 0
         byMarket[mktKey].market = mktKey
@@ -556,7 +837,7 @@ app.get('/api/reports/spend', async (req, res) => {
       let totalDailyBudgetAll = 0
       try {
         const dbBudgets = await import('./db/budgets.js')
-        totalDailyBudgetAll = await dbBudgets.getTotalDailyBudget()
+        totalDailyBudgetAll = await dbBudgets.getTotalDailyBudget(req.workspaceId)
       } catch (_) {}
       const totalBudgetPeriod = Math.round((totalDailyBudgetAll || 0) * daysInRange * 100) / 100
       return res.json({
@@ -569,9 +850,11 @@ app.get('/api/reports/spend', async (req, res) => {
         daysInRange,
         totalDailyBudget: Math.round((totalDailyBudgetAll || 0) * 100) / 100,
         totalBudgetPeriod,
+        lastSyncAt,
       })
     } catch (err) {
       console.error('DB spend error:', err)
+      return res.status(500).json({ error: 'DB spend error', hint: 'Check server logs.' })
     }
   }
 
@@ -596,7 +879,7 @@ app.get('/api/reports/spend', async (req, res) => {
         })
       }
       const fromCampaigns = [...new Set((campaigns || []).map((c) => c.accountName).filter(Boolean))]
-      const allAccounts = await mergeAllAdAccounts(fromCampaigns)
+      const allAccounts = await mergeAllAdAccounts(fromCampaigns, req.workspaceId)
       const byAccount = {}
       const byProduct = {}
       const byMarket = {}
@@ -636,7 +919,7 @@ app.get('/api/reports/spend', async (req, res) => {
     return res.status(503).json({ error: 'Run npm run sync first to fetch data, or connect Meta token' })
   }
   requireAuth(req, res, () => fetchSpendFromApi(req, res))
-})
+}));
 
 async function fetchSpendFromApi(req, res) {
   const { datePreset, since, until, account } = req.query
@@ -726,7 +1009,7 @@ async function fetchSpendFromApi(req, res) {
       accounts: allAccountNames,
       totalSpend: filtered.reduce((s, r) => s + r.spend, 0)
     }
-    await enrichSpendWithBudgets(payload, range)
+    await enrichSpendWithBudgets(payload, range, req.workspaceId)
     res.json(payload)
   } catch (err) {
     console.error(err)
@@ -735,14 +1018,17 @@ async function fetchSpendFromApi(req, res) {
 }
 
 // Winners: BDD (ads_raw) > data/winners.json > API Meta live
-app.get('/api/reports/winners', async (req, res) => {
+app.get('/api/reports/winners', requireDbUser, async (req, res) => {
   const { datePreset, since, until, account } = req.query
   const range = getDateRange(datePreset, since, until)
 
   if (hasDb()) {
+    if (!req.workspaceId) {
+      return res.status(400).json({ error: 'Workspace required', winners: [] })
+    }
     try {
       const dbSpend = await import('./db/spend.js')
-      const rows = await dbSpend.getAdsRaw(range?.since, range?.until, account || null)
+      const rows = await dbSpend.getAdsRaw(range?.since, range?.until, account || null, req.workspaceId)
       const byAd = {}
       for (const r of rows) {
         const key = r.adId || r.adName
@@ -786,6 +1072,7 @@ app.get('/api/reports/winners', async (req, res) => {
       return res.json({ winners: aggregated })
     } catch (err) {
       console.error('DB winners error:', err)
+      return res.status(500).json({ error: 'DB winners error', hint: 'Check server logs.' })
     }
   }
 
@@ -970,12 +1257,13 @@ async function fetchWinnersFromApi(req, res) {
 }
 
 // Budgets campagnes
-app.get('/api/campaigns/budgets', async (req, res) => {
+app.get('/api/campaigns/budgets', requireDbUser, async (req, res) => {
   console.log('[GET /api/campaigns/budgets]', { account: req.query.account, hasDb: hasDb() })
   if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  if (!req.workspaceId) return res.status(400).json({ error: 'Workspace required', budgets: [] })
   try {
     const dbBudgets = await import('./db/budgets.js')
-    const list = await dbBudgets.listCampaignBudgets(req.query.account || null)
+    const list = await dbBudgets.listCampaignBudgets(req.workspaceId, req.query.account || null)
     console.log('[GET /api/campaigns/budgets] OK:', list.length, 'budgets')
     res.json({ budgets: list })
   } catch (err) {
@@ -991,20 +1279,43 @@ app.get('/api/utils/parse-campaign', (req, res) => {
   res.json(parseCampaignName(name))
 })
 
-// Handler erreurs global (réponse JSON pour /api)
+// Handler erreurs global (réponse JSON pour /api — évite la page HTML 500)
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err)
   console.error('[API error]', err)
-  const msg = err?.message || err?.toString?.() || 'Erreur interne'
-  if (req.path?.startsWith?.('/api') || req.url?.startsWith?.('/api')) {
-    return res.status(500).json({ error: msg, hint: 'Vérifier les logs serveur.' })
-  }
-  next(err)
+  const msg = err?.message || err?.toString?.() || 'Internal error'
+  const hint = /does not exist|column .* does not exist/i.test(msg)
+    ? 'Database schema may be outdated. Run: cd server && npm run db:migrate (or db:fix-budgets-pk if needed).'
+    : 'Check server logs.'
+  res.setHeader('Content-Type', 'application/json')
+  res.status(500).json({ error: msg, hint })
 })
 
 export default app
 if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
-    console.log(`API running at http://localhost:${PORT}`)
-  })
+  let server = null
+  const start = () => {
+    server = app.listen(PORT, () => {
+      console.log(`Dashboard API: http://localhost:${PORT}`)
+      console.log(`Front (Vite) doit proxy /api vers ce port (défaut 3001). Si tu es sur :3005, le proxy cible :${PORT}.`)
+    })
+    server.on('error', (err) => {
+      if (err?.code === 'EADDRINUSE') {
+        console.warn(`[API] Port ${PORT} déjà utilisé. Retry dans 500ms...`)
+        setTimeout(() => start(), 500)
+        return
+      }
+      console.error('[API] Server error:', err)
+      process.exit(1)
+    })
+  }
+  const shutdown = (sig) => {
+    if (!server) return process.exit(0)
+    console.log(`[API] Arrêt (${sig})...`)
+    server.close(() => process.exit(0))
+    setTimeout(() => process.exit(0), 1000).unref()
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
+  start()
 }

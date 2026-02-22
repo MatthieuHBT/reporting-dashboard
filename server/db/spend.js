@@ -5,37 +5,72 @@ function guard() {
   if (!hasDb()) throw new Error('DATABASE_URL not configured')
 }
 
-export async function getSyncRuns(limit = 5) {
+export async function getSyncRuns(limit = 5, workspaceId = null) {
   guard()
+  if (!workspaceId) {
+    return sql`
+      SELECT id, synced_at, date_since, date_until, status, campaigns_count, error_message
+      FROM sync_runs ORDER BY synced_at DESC LIMIT ${limit}
+    `
+  }
   return sql`
     SELECT id, synced_at, date_since, date_until, status, campaigns_count, error_message
-    FROM sync_runs ORDER BY synced_at DESC LIMIT ${limit}
+    FROM sync_runs
+    WHERE workspace_id = ${String(workspaceId)}
+    ORDER BY synced_at DESC LIMIT ${limit}
   `
 }
 
-export async function getLatestSyncRun() {
+export async function getLatestSyncRun(workspaceId = null) {
   guard()
-  const rows = await sql`
-    SELECT id, synced_at, date_since, date_until, campaigns_count
-    FROM sync_runs WHERE status = 'success'
-    ORDER BY synced_at DESC LIMIT 1
-  `
+  const rows = workspaceId
+    ? await sql`
+      SELECT id, synced_at, date_since, date_until, campaigns_count
+      FROM sync_runs
+      WHERE status = 'success' AND workspace_id = ${String(workspaceId)}
+      ORDER BY synced_at DESC LIMIT 1
+    `
+    : await sql`
+      SELECT id, synced_at, date_since, date_until, campaigns_count
+      FROM sync_runs WHERE status = 'success'
+      ORDER BY synced_at DESC LIMIT 1
+    `
   return rows[0] || null
 }
 
-export async function countCampaigns(since = null, until = null) {
+/** True if this workspace has at least one successful sync (for onboarding "first sync done"). */
+export async function hasSuccessfulSync(workspaceId) {
+  guard()
+  if (!workspaceId) return false
+  const rows = await sql`
+    SELECT 1 FROM sync_runs
+    WHERE workspace_id = ${String(workspaceId)} AND status = 'success'
+    LIMIT 1
+  `
+  return (rows?.length ?? 0) > 0
+}
+
+export async function countCampaigns(since = null, until = null, workspaceId = null) {
   guard()
   let rows
   if (since && until) {
-    rows = await sql`SELECT COUNT(*)::int AS count FROM campaigns WHERE date >= ${since} AND date <= ${until}`
+    rows = workspaceId
+      ? await sql`SELECT COUNT(*)::int AS count FROM campaigns WHERE workspace_id = ${String(workspaceId)} AND date >= ${since} AND date <= ${until}`
+      : await sql`SELECT COUNT(*)::int AS count FROM campaigns WHERE date >= ${since} AND date <= ${until}`
   } else {
-    rows = await sql`SELECT COUNT(*)::int AS count FROM campaigns`
+    rows = workspaceId
+      ? await sql`SELECT COUNT(*)::int AS count FROM campaigns WHERE workspace_id = ${String(workspaceId)}`
+      : await sql`SELECT COUNT(*)::int AS count FROM campaigns`
   }
   return rows?.[0]?.count ?? 0
 }
 
-export async function getCampaigns(since, until, accountName = null) {
+export async function getCampaigns(since, until, accountName = null, workspaceId = null) {
   guard()
+  // Sécurité multi-tenant: sans workspace_id on ne renvoie jamais toutes les campagnes (évite mélange de données).
+  const wid = typeof workspaceId === 'string' && workspaceId.trim() ? workspaceId.trim() : null
+  if (!wid) return []
+
   // IMPORTANT:
   // - Si accountName est un vrai nom de compte Meta (ex: "VELUNAPETS BG COD $"), on filtre EXACTEMENT sur account_name.
   // - Le filtre "market" (regex sur campaign_name) n'est utilisé que si l'utilisateur passe un code court (ex: "BG", "IT").
@@ -45,24 +80,26 @@ export async function getCampaigns(since, until, accountName = null) {
 
   let rows
   if (since && until && namePattern) {
-    rows = await sql`SELECT * FROM campaigns WHERE date >= ${since} AND date <= ${until} AND campaign_name ~* ${namePattern} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until} AND campaign_name ~* ${namePattern} ORDER BY campaign_name, date DESC, spend DESC`
   } else if (namePattern) {
-    rows = await sql`SELECT * FROM campaigns WHERE campaign_name ~* ${namePattern} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND campaign_name ~* ${namePattern} ORDER BY campaign_name, date DESC, spend DESC`
   } else if (since && until && accountName) {
-    rows = await sql`SELECT * FROM campaigns WHERE date >= ${since} AND date <= ${until} AND account_name = ${accountName} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until} AND account_name = ${accountName} ORDER BY campaign_name, date DESC, spend DESC`
   } else if (accountName) {
-    rows = await sql`SELECT * FROM campaigns WHERE account_name = ${accountName} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND account_name = ${accountName} ORDER BY campaign_name, date DESC, spend DESC`
   } else if (since && until) {
-    rows = await sql`SELECT * FROM campaigns WHERE date >= ${since} AND date <= ${until} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until} ORDER BY campaign_name, date DESC, spend DESC`
   } else {
-    rows = await sql`SELECT * FROM campaigns ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} ORDER BY campaign_name, date DESC, spend DESC`
   }
   return rows.map(rowToCampaign)
 }
 
-export async function getDistinctAccounts() {
+export async function getDistinctAccounts(workspaceId = null) {
   guard()
-  const rows = await sql`SELECT DISTINCT account_name FROM campaigns WHERE account_name IS NOT NULL ORDER BY account_name`
+  const wid = typeof workspaceId === 'string' && workspaceId.trim() ? workspaceId.trim() : null
+  if (!wid) return []
+  const rows = await sql`SELECT DISTINCT account_name FROM campaigns WHERE workspace_id = ${wid} AND account_name IS NOT NULL ORDER BY account_name`
   return rows.map((r) => r.account_name).filter(Boolean)
 }
 
@@ -86,11 +123,11 @@ function rowToCampaign(r) {
   }
 }
 
-export async function createSyncRun(since, until, status = 'running') {
+export async function createSyncRun(since, until, status = 'running', workspaceId = null) {
   guard()
   const [row] = await sql`
-    INSERT INTO sync_runs (date_since, date_until, status, campaigns_count)
-    VALUES (${since}, ${until}, ${status}, 0)
+    INSERT INTO sync_runs (workspace_id, date_since, date_until, status, campaigns_count)
+    VALUES (${workspaceId ? String(workspaceId) : null}, ${since}, ${until}, ${status}, 0)
     RETURNING id, synced_at, date_since, date_until, status
   `
   return row
@@ -105,21 +142,42 @@ export async function updateSyncRun(id, { status, campaignsCount, errorMessage }
 }
 
 /** Supprime les campagnes à partir d'une date (pour sync incrémentale) */
-export async function deleteCampaignsFromDate(since) {
+export async function deleteCampaignsFromDate(since, workspaceId = null, accountNames = null) {
   guard()
-  await sql`DELETE FROM campaigns WHERE date >= ${since}`
+  const names = Array.isArray(accountNames) ? accountNames.filter(Boolean).map((n) => String(n)) : null
+  if (names && names.length) {
+    // IMPORTANT: ne supprimer que pour les ad accounts ciblés (évite d'effacer les autres comptes du workspace)
+    for (const accName of names) {
+      if (!workspaceId) {
+        await sql`DELETE FROM campaigns WHERE account_name = ${accName} AND date IS NULL`
+        await sql`DELETE FROM campaigns WHERE account_name = ${accName} AND date >= ${since}`
+      } else {
+        await sql`DELETE FROM campaigns WHERE workspace_id = ${String(workspaceId)} AND account_name = ${accName} AND date IS NULL`
+        await sql`DELETE FROM campaigns WHERE workspace_id = ${String(workspaceId)} AND account_name = ${accName} AND date >= ${since}`
+      }
+    }
+    return
+  }
+  if (!workspaceId) {
+    await sql`DELETE FROM campaigns WHERE date IS NULL`
+    await sql`DELETE FROM campaigns WHERE date >= ${since}`
+    return
+  }
+  await sql`DELETE FROM campaigns WHERE workspace_id = ${String(workspaceId)} AND date IS NULL`
+  await sql`DELETE FROM campaigns WHERE workspace_id = ${String(workspaceId)} AND date >= ${since}`
 }
 
 /** Insère des campagnes (utilisé par replace et merge) */
-export async function insertCampaigns(syncRunId, campaigns) {
+export async function insertCampaigns(syncRunId, campaigns, workspaceId = null) {
   guard()
   const BATCH = 100
   for (let i = 0; i < campaigns.length; i += BATCH) {
     const batch = campaigns.slice(i, i + BATCH)
     for (const c of batch) {
       await sql`
-        INSERT INTO campaigns (sync_run_id, account_id, account_name, campaign_id, campaign_name, date, spend, impressions, clicks, code_country, product_name, product_with_animal, animal, type, raw, naming_date)
+        INSERT INTO campaigns (workspace_id, sync_run_id, account_id, account_name, campaign_id, campaign_name, date, spend, impressions, clicks, code_country, product_name, product_with_animal, animal, type, raw, naming_date)
         VALUES (
+          ${workspaceId ? String(workspaceId) : null},
           ${syncRunId},
           ${c.accountId || null},
           ${c.accountName || null},
@@ -142,27 +200,36 @@ export async function insertCampaigns(syncRunId, campaigns) {
   }
 }
 
-export async function replaceCampaigns(syncRunId, campaigns) {
+export async function replaceCampaigns(syncRunId, campaigns, workspaceId = null) {
   guard()
-  await sql`TRUNCATE TABLE campaigns RESTART IDENTITY CASCADE`
-  await insertCampaigns(syncRunId, campaigns)
+  if (!workspaceId) {
+    await sql`TRUNCATE TABLE campaigns RESTART IDENTITY CASCADE`
+    await insertCampaigns(syncRunId, campaigns, workspaceId)
+    return
+  }
+  await sql`DELETE FROM campaigns WHERE workspace_id = ${String(workspaceId)}`
+  await insertCampaigns(syncRunId, campaigns, workspaceId)
 }
 
 /** Supprime les ads_raw à partir d'une date */
-export async function deleteAdsRawFromDate(since) {
+export async function deleteAdsRawFromDate(since, workspaceId = null) {
   guard()
-  await sql`DELETE FROM ads_raw WHERE date >= ${since}`
+  if (!workspaceId) {
+    await sql`DELETE FROM ads_raw WHERE date >= ${since}`
+    return
+  }
+  await sql`DELETE FROM ads_raw WHERE workspace_id = ${String(workspaceId)} AND date >= ${since}`
 }
 
 /** Insère des ads pour Winners */
-export async function insertAdsRaw(syncRunId, ads) {
+export async function insertAdsRaw(syncRunId, ads, workspaceId = null) {
   guard()
   const BATCH = 500
 
   const insertBatch = async (batch, withPurchaseCount) => {
     const cols = withPurchaseCount
-      ? ['sync_run_id', 'ad_id', 'ad_name', 'account_id', 'account_name', 'date', 'spend', 'impressions', 'clicks', 'purchase_value', 'purchase_count']
-      : ['sync_run_id', 'ad_id', 'ad_name', 'account_id', 'account_name', 'date', 'spend', 'impressions', 'clicks', 'purchase_value']
+      ? ['workspace_id', 'sync_run_id', 'ad_id', 'ad_name', 'account_id', 'account_name', 'date', 'spend', 'impressions', 'clicks', 'purchase_value', 'purchase_count']
+      : ['workspace_id', 'sync_run_id', 'ad_id', 'ad_name', 'account_id', 'account_name', 'date', 'spend', 'impressions', 'clicks', 'purchase_value']
 
     const values = []
     const rows = []
@@ -170,6 +237,7 @@ export async function insertAdsRaw(syncRunId, ads) {
 
     for (const a of batch) {
       const row = [
+        workspaceId ? String(workspaceId) : null,
         syncRunId,
         a.adId || null,
         a.adName || null,
@@ -203,24 +271,31 @@ export async function insertAdsRaw(syncRunId, ads) {
 }
 
 /** Remplace tous les ads_raw (pour full sync) */
-export async function replaceAdsRaw(syncRunId, ads) {
+export async function replaceAdsRaw(syncRunId, ads, workspaceId = null) {
   guard()
-  await sql`TRUNCATE TABLE ads_raw RESTART IDENTITY CASCADE`
-  if (ads.length > 0) await insertAdsRaw(syncRunId, ads)
+  if (!workspaceId) {
+    await sql`TRUNCATE TABLE ads_raw RESTART IDENTITY CASCADE`
+    if (ads.length > 0) await insertAdsRaw(syncRunId, ads, workspaceId)
+    return
+  }
+  await sql`DELETE FROM ads_raw WHERE workspace_id = ${String(workspaceId)}`
+  if (ads.length > 0) await insertAdsRaw(syncRunId, ads, workspaceId)
 }
 
 /** Récupère les ads_raw pour Winners (filtrage par date, account) */
-export async function getAdsRaw(since, until, accountName = null) {
+export async function getAdsRaw(since, until, accountName = null, workspaceId = null) {
   guard()
+  const wid = typeof workspaceId === 'string' && workspaceId.trim() ? workspaceId.trim() : null
+  if (!wid) return []
   let rows
   if (since && until && accountName) {
-    rows = await sql`SELECT * FROM ads_raw WHERE date >= ${since} AND date <= ${until} AND account_name = ${accountName}`
+    rows = await sql`SELECT * FROM ads_raw WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until} AND account_name = ${accountName}`
   } else if (accountName) {
-    rows = await sql`SELECT * FROM ads_raw WHERE account_name = ${accountName}`
+    rows = await sql`SELECT * FROM ads_raw WHERE workspace_id = ${wid} AND account_name = ${accountName}`
   } else if (since && until) {
-    rows = await sql`SELECT * FROM ads_raw WHERE date >= ${since} AND date <= ${until}`
+    rows = await sql`SELECT * FROM ads_raw WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until}`
   } else {
-    rows = await sql`SELECT * FROM ads_raw`
+    rows = await sql`SELECT * FROM ads_raw WHERE workspace_id = ${wid}`
   }
   return rows.map((r) => ({
     adId: r.ad_id,

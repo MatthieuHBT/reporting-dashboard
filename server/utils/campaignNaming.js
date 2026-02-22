@@ -44,13 +44,14 @@ export function parseCampaignName(name) {
   }
 
   const parts = name.split('_')
-  // CBO/ABO_XX_... : extraire le pays même si format incomplet
-  let codeCountry = (parts.length >= 2 && /^(CBO|ABO)$/i.test(parts[0]) && COUNTRY_CODE_RE.test((parts[1] || '').toUpperCase()))
-    ? (parts[1] || '').toUpperCase()
+  // CBO/ABO_XX_... : extraire le pays (accepter espaces: "CBO _HR_" → HR)
+  const firstPart = (parts[0] || '').trim()
+  let codeCountry = (parts.length >= 2 && /^(CBO|ABO)$/i.test(firstPart) && COUNTRY_CODE_RE.test((parts[1] || '').trim().toUpperCase()))
+    ? (parts[1] || '').trim().toUpperCase()
     : ''
-  // Fallback: [NEW] CBO_GR_..., [NOT LIVE] CBO_HU_... — chercher CBO_XX ou ABO_XX n'importe où
+  // Fallback: [NEW] CBO_GR_..., [NOT LIVE] CBO_HU_..., CBO _HR_... (espace après CBO)
   if (!codeCountry) {
-    const match = name.match(/(?:CBO|ABO)_([A-Z]{2,3})(?:_|$|\s)/i)
+    const match = name.match(/(?:CBO|ABO)\s*_\s*([A-Z]{2,3})(?:_|$|\s)/i)
     if (match && COUNTRY_CODE_RE.test((match[1] || '').toUpperCase())) {
       codeCountry = (match[1] || '').toUpperCase()
     }

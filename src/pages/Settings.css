@@ -22,6 +22,66 @@
   border: 1px solid var(--border);
 }
 
+.settings-warning {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  background: rgba(234, 179, 8, 0.12);
+  color: var(--text);
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.settings-card-spaced {
+  margin-top: 1rem;
+}
+
+.settings-subheader h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.settings-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.5rem 0;
+}
+
+.settings-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.settings-row input {
+  flex: 1 1 240px;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.settings-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-form select {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
 .settings-desc {
   color: var(--text-muted);
   margin: 0 0 0.5rem;
@@ -137,4 +197,73 @@
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.settings-members-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.settings-members-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-members-row:last-child {
+  border-bottom: none;
+}
+
+.settings-members-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.settings-members-email {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.settings-members-role {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.4rem;
+  background: var(--hover);
+  border-radius: 4px;
+  text-transform: capitalize;
+}
+
+.settings-members-remove {
+  padding: 0.35rem 0.5rem;
+  min-width: 32px;
+}
+
+.settings-invite-form .settings-row {
+  margin-top: 0.5rem;
+}
+
+.settings-role-select {
+  width: auto;
+  min-width: 100px;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.settings-first-sync {
+  border-left: 4px solid var(--accent);
+}
+
+.settings-first-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
 }

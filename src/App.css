@@ -170,6 +170,32 @@
   min-height: 0;
 }
 
+.sidebar-workspace {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.sidebar-workspace-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.sidebar-workspace-select {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+.sidebar-workspace-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .sidebar-actions {
   display: flex;
   gap: 8px;

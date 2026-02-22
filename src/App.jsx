@@ -34,11 +34,12 @@ import {
 } from 'recharts'
 import { exportToCsv } from './utils/exportCsv'
 import { format, subDays, startOfDay, differenceInDays } from 'date-fns'
-import { api, getStoredToken, setStoredToken } from './api/client'
+import { api, getStoredToken, setStoredToken, getStoredWorkspaceId, setStoredWorkspaceId } from './api/client'
 import { parseAdName } from './utils/parseAdNaming'
 import Login from './pages/Login'
 import Admin from './pages/Admin'
 import Settings from './pages/Settings'
+import OnboardingModal from './components/OnboardingModal'
 import { PAGE_IDS, PAGE_LABELS } from './data/members'
 import './App.css'
 
@@ -49,6 +50,16 @@ function getMarketFromCampaignName(name) {
   // Ex: "CBO_BG_...", "[NEW]_CBO_BG_...", "CBO _HR_..."
   const m = s.match(/(?:CBO|ABO)\s*[_\-\s]*([A-Z]{2,3})\s*_/)
   return m?.[1] || ''
+}
+
+/** Market affiché pour une campagne : code pays du nom, sinon depuis le compte (ex. VELUNAPETS SK COD → SK), sinon Unknown */
+function getCampaignMarket(c) {
+  const code = (c?.codeCountry && String(c.codeCountry).trim()) || ''
+  if (code) return code
+  const fromAccount = extractMarketFromAccountName(c?.accountName || '')
+  if (fromAccount) return fromAccount
+  const fromName = getMarketFromCampaignName(c?.campaignName || c?.raw || '')
+  return fromName || ''
 }
 
 function normalizeProductName(name) {
@@ -108,6 +119,9 @@ function App() {
   const [connected, setConnected] = useState(false)
   const [demoMode, setDemoMode] = useState(false)
   const [dbMode, setDbMode] = useState(false)
+  const [workspaceId, setWorkspaceId] = useState(getStoredWorkspaceId() || null)
+  const [metaTokenConfigured, setMetaTokenConfigured] = useState(null) // null = unknown
+  const [firstSyncDone, setFirstSyncDone] = useState(null) // null = unknown
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [activeTab, setActiveTab] = useState('spend') // spend | finance | stock | winners | general
   const [theme, setTheme] = useState('dark')
@@ -137,6 +151,9 @@ function App() {
   const [budgetsLoading, setBudgetsLoading] = useState(false)
   const hasSetInitialTab = useRef(false)
 
+  const needsOnboarding = !!(dbMode && workspaceId && metaTokenConfigured === false)
+  const needsFirstSync = !!(dbMode && workspaceId && metaTokenConfigured === true && firstSyncDone === false)
+
   const toggleMultiValue = useCallback((setFn, value) => {
     setFn((prev) => {
       const list = Array.isArray(prev) ? prev : []
@@ -159,7 +176,7 @@ function App() {
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange([...options]) }}
               disabled={!options?.length}
             >
-              Tout
+              All
             </button>
             <button
               type="button"
@@ -167,7 +184,7 @@ function App() {
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange([]) }}
               disabled={!list.length}
             >
-              Aucun
+              None
             </button>
           </div>
           <div className="multi-select-options">
@@ -182,7 +199,7 @@ function App() {
               </label>
             ))}
             {!options?.length && (
-              <div className="multi-select-empty">Aucune option</div>
+              <div className="multi-select-empty">No options</div>
             )}
           </div>
         </div>
@@ -247,7 +264,7 @@ function App() {
       const data = await api.campaigns.budgets({})
       setBudgetsList(data.budgets || [])
     } catch (err) {
-      const msg = err?.message || 'Erreur lors du chargement des budgets'
+      const msg = err?.message || 'Failed to load budgets'
       console.error('loadBudgetsForPage error:', err)
       // Ne pas afficher l'erreur si c'est juste "Database not configured" (503) - c'est normal si DB pas configurée
       if (!msg.includes('503') && !msg.includes('Database not configured')) {
@@ -286,18 +303,26 @@ function App() {
   }
 
   const isAdmin = currentUser?.role === 'admin'
+  const isWorkspaceOwner = useMemo(() => {
+    const wsList = Array.isArray(currentUser?.workspaces) ? currentUser.workspaces : []
+    const role = (workspaceId
+      ? wsList.find((w) => String(w.id) === String(workspaceId))?.role
+      : null) || wsList?.[0]?.role
+    return role === 'owner' || role === 'admin'
+  }, [currentUser, workspaceId])
+  const canSeeSettings = dbMode && (isAdmin || isWorkspaceOwner || needsOnboarding || needsFirstSync)
 
   const visibleSidebarItems = useMemo(() => {
     return SIDEBAR_SECTIONS.map((section) => ({
       ...section,
       items: section.items.filter((item) => {
         if (item.id === 'admin') return isAdmin
-        if (item.id === 'settings') return isAdmin && dbMode
+        if (item.id === 'settings') return canSeeSettings
         if (item.id === 'general') return canAccess('general')
         return canAccess(item.id)
       }),
     })).filter((s) => s.items.length > 0)
-  }, [currentUser, isAdmin, dbMode])
+  }, [currentUser, isAdmin, canSeeSettings, dbMode])
 
   const firstAccessiblePage = useMemo(() => {
     for (const section of visibleSidebarItems) {
@@ -320,6 +345,28 @@ function App() {
     }
   }, [connected, dbMode, currentUser])
 
+  const checkOnboardingStatus = useCallback(async (forceWorkspaceId = null) => {
+    if (!dbMode) {
+      setMetaTokenConfigured(null)
+      setFirstSyncDone(null)
+      return
+    }
+    const wsId = forceWorkspaceId || workspaceId || getStoredWorkspaceId()
+    if (!wsId) {
+      setMetaTokenConfigured(null)
+      setFirstSyncDone(null)
+      return
+    }
+    try {
+      const r = await api.settings.metaToken.get()
+      setMetaTokenConfigured(!!r.configured)
+      setFirstSyncDone(r.firstSyncDone === true)
+    } catch {
+      setMetaTokenConfigured(null)
+      setFirstSyncDone(null)
+    }
+  }, [dbMode, workspaceId])
+
   useEffect(() => {
     const token = getStoredToken()
     if (token) {
@@ -327,11 +374,28 @@ function App() {
         .then((data) => {
           setConnected(true)
           setDbMode(true)
-          if (data.user) setCurrentUser(data.user)
+          if (data.user) {
+            setCurrentUser(data.user)
+            const wsList = Array.isArray(data.user?.workspaces) ? data.user.workspaces : []
+            const storedWs = getStoredWorkspaceId()
+            const allowed = new Set(wsList.map((w) => String(w.id)))
+            if (wsList.length) {
+              if (!storedWs || !allowed.has(String(storedWs))) {
+                setStoredWorkspaceId(wsList[0].id)
+              }
+            } else {
+              // Sécurité: si l'utilisateur n'a aucun workspace, ne pas réutiliser un ancien workspace stocké
+              if (storedWs) setStoredWorkspaceId(null)
+            }
+            const finalWs = getStoredWorkspaceId() || wsList?.[0]?.id || null
+            setWorkspaceId(finalWs)
+          }
           setDemoMode(false)
         })
         .catch(() => {
           setStoredToken(null)
+          setStoredWorkspaceId(null)
+          setWorkspaceId(null)
           setConnected(false)
         })
         .finally(() => setAuthChecked(true))
@@ -343,6 +407,17 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    if (connected && dbMode && workspaceId) checkOnboardingStatus(workspaceId)
+  }, [connected, dbMode, workspaceId, checkOnboardingStatus])
+
+  useEffect(() => {
+    if (needsOnboarding || needsFirstSync) {
+      setActiveTab('settings')
+      hasSetInitialTab.current = true
+    }
+  }, [needsOnboarding, needsFirstSync])
+
   const fetchSpend = useCallback(async () => {
     setIsLoading(true)
     setApiError(null)
@@ -353,6 +428,7 @@ function App() {
         : { since: dateFrom, until: dateTo }
       const data = await api.reports.spend(params)
       setSpendData(data)
+      if (data?.lastSyncAt) setLastUpdate(new Date(data.lastSyncAt))
     } catch (err) {
       setApiError(err.message)
     } finally {
@@ -377,14 +453,14 @@ function App() {
   }, [activeTab, dateRange, dateFrom, dateTo, fetchSpend])
 
   useEffect(() => {
-    if ((activeTab === 'spend' || activeTab === 'budget') && dbMode) {
+    if ((activeTab === 'spend' || activeTab === 'budget') && dbMode && !needsOnboarding && !needsFirstSync) {
       api.reports.spendToday()
         .then((data) => setSpendTodayData(data))
         .catch(() => setSpendTodayData(null))
     } else {
       setSpendTodayData(null)
     }
-  }, [activeTab, dbMode])
+  }, [activeTab, dbMode, needsOnboarding, needsFirstSync])
 
   useEffect(() => {
     if (activeTab === 'winners') fetchWinners()
@@ -396,7 +472,13 @@ function App() {
 
   const handleLogout = async () => {
     try {
-      if (dbMode) setStoredToken(null)
+      if (dbMode) {
+        setStoredToken(null)
+        setStoredWorkspaceId(null)
+        setWorkspaceId(null)
+        setMetaTokenConfigured(null)
+        setFirstSyncDone(null)
+      }
       else if (!demoMode) await api.auth.logout()
       setConnected(false)
       setDemoMode(false)
@@ -438,7 +520,7 @@ function App() {
       if (filterModel) campaigns = campaigns.filter((c) => extractModel(c.accountName || '') === filterModel)
       if (filterMarket?.length) {
         const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
-        campaigns = campaigns.filter((c) => wanted.has(String(c.codeCountry || 'Unknown').toUpperCase()))
+        campaigns = campaigns.filter((c) => wanted.has(String(getCampaignMarket(c) || 'Unknown').toUpperCase()))
       }
 
       const budgetByKey = {}
@@ -464,7 +546,7 @@ function App() {
         byProduct[prodKey].impressions += r.impressions || 0
         byProduct[prodKey].clicks += r.clicks || 0
         byProduct[prodKey].product = prodKey
-        const mktKey = r.codeCountry || 'Unknown'
+        const mktKey = getCampaignMarket(r) || 'Unknown'
         byMarket[mktKey] = (byMarket[mktKey] || { spend: 0 })
         byMarket[mktKey].spend += r.spend || 0
         byMarket[mktKey].market = mktKey
@@ -506,13 +588,13 @@ function App() {
           return { date: iso, spend: Math.round(spend * 100) / 100 }
         })
       const allProds = [...new Set(campaigns.map((c) => getProductKey(c)).filter(Boolean))].sort()
-      const allMkts = [...new Set(spendData.campaigns.map((c) => (c.codeCountry || 'Unknown')).filter(Boolean))].sort()
+      const allMkts = [...new Set(spendData.campaigns.map((c) => (getCampaignMarket(c) || 'Unknown')).filter(Boolean))].sort()
       const allAccounts = spendData.accounts?.length ? spendData.accounts : [...new Set(spendData.campaigns.map((c) => c.accountName || '').filter(Boolean))].sort()
       const byCampaign = {}
       for (const r of campaigns) {
         const key = r.campaignId || r.campaignName || `${r.accountName}-${r.campaignName}-${r.date}`
         if (!byCampaign[key]) {
-          byCampaign[key] = { campaignName: r.campaignName || r.raw || '-', campaignId: r.campaignId, accountName: r.accountName, codeCountry: r.codeCountry || 'Unknown', product: getProductKey(r), spend: 0, impressions: 0, dateMin: r.date, dateMax: r.date }
+          byCampaign[key] = { campaignName: r.campaignName || r.raw || '-', campaignId: r.campaignId, accountName: r.accountName, codeCountry: getCampaignMarket(r) || 'Unknown', product: getProductKey(r), spend: 0, impressions: 0, dateMin: r.date, dateMax: r.date }
         }
         byCampaign[key].spend += r.spend || 0
         byCampaign[key].impressions += r.impressions || 0
@@ -668,7 +750,7 @@ function App() {
       if (filterProduct?.length && !filterProduct.includes(getProductKey(c))) return false
       if (filterModel && extractModel(c.accountName || '') !== filterModel) return false
       if (filterMarket?.length) {
-        const code = String(c.codeCountry || 'Unknown').toUpperCase()
+        const code = String(getCampaignMarket(c) || 'Unknown').toUpperCase()
         const wanted = new Set(filterMarket.map((m) => String(m).toUpperCase()))
         if (!wanted.has(code)) return false
       }
@@ -726,20 +808,30 @@ function App() {
     setIsRefreshing(true)
     setApiError(null)
     try {
-      const result = await api.refresh(null, opts)
+      const nextOpts = { ...opts }
+      if (nextOpts.accounts == null && Array.isArray(filterAccount) && filterAccount.length) {
+        nextOpts.accounts = filterAccount
+      }
+      if (nextOpts.skipBudgets == null && activeTab !== 'budget') {
+        nextOpts.skipBudgets = true
+      }
+      const result = await api.refresh(null, nextOpts)
       await fetchSpend()
       if (activeTab === 'winners') fetchWinners()
       if (activeTab === 'budget') loadBudgetsForPage()
       api.reports.spendToday().then((data) => setSpendTodayData(data)).catch(() => {})
       setLastUpdate(new Date())
+      checkOnboardingStatus(workspaceId || getStoredWorkspaceId())
       // Log info sync (incrémentale vs full) pour diagnostic
       if (result?.range) {
-        const mode = result.incremental ? 'incrémentale' : (result.alreadyUpToDate ? 'à jour' : 'complète')
+        const mode = result.incremental ? 'incremental' : (result.alreadyUpToDate ? 'up to date' : 'full')
         console.log(`Sync OK (${mode}): ${result.range?.since} → ${result.range?.until}, ${result.campaignsCount ?? 0} campaigns`)
       }
     } catch (err) {
-      setApiError(err?.message || err?.toString?.() || 'Sync échouée')
+      const msg = err?.message || err?.toString?.() || 'Sync failed'
+      setApiError(msg)
       console.error('Sync error:', err)
+      throw err
     } finally {
       setIsRefreshing(false)
     }
@@ -752,6 +844,20 @@ function App() {
       setIsLoading(true)
       setTimeout(() => setIsLoading(false), 800)
     }
+  }
+
+  const handleWorkspaceChange = (nextWorkspaceId) => {
+    const ws = nextWorkspaceId || null
+    setStoredWorkspaceId(ws)
+    setWorkspaceId(ws)
+    setMetaTokenConfigured(null)
+    setFirstSyncDone(null)
+    setApiError(null)
+    fetchSpend()
+    if (activeTab === 'winners') fetchWinners()
+    if (activeTab === 'budget') loadBudgetsForPage()
+    api.reports.spendToday().then((data) => setSpendTodayData(data)).catch(() => setSpendTodayData(null))
+    checkOnboardingStatus(ws)
   }
 
   const handleExportSpend = () => {
@@ -843,25 +949,57 @@ function App() {
   if (!connected) {
     return (
       <div className="app app-login theme-dark">
-        <Login onLogin={({ isDemo, user, dbMode: db }) => {
+        <Login onLogin={({ isDemo, user, dbMode: db, goToSettings }) => {
           setConnected(true)
           setDemoMode(isDemo ?? false)
           setDbMode(!!db)
-          if (user) setCurrentUser(user)
-          else if (isDemo) setCurrentUser({ id: 'demo', name: 'Demo', role: 'admin', pages: ['spend', 'stock', 'winners', 'general'] })
+          if (user) {
+            setCurrentUser(user)
+            const wsList = Array.isArray(user?.workspaces) ? user.workspaces : []
+            const storedWs = getStoredWorkspaceId()
+            const allowed = new Set(wsList.map((w) => String(w.id)))
+            if (wsList.length) {
+              if (!storedWs || !allowed.has(String(storedWs))) {
+                setStoredWorkspaceId(wsList[0].id)
+              }
+            } else {
+              if (storedWs) setStoredWorkspaceId(null)
+            }
+            const finalWs = getStoredWorkspaceId() || wsList?.[0]?.id || null
+            setWorkspaceId(finalWs)
+            setMetaTokenConfigured(null)
+            setFirstSyncDone(null)
+            if (finalWs) checkOnboardingStatus(finalWs)
+          } else if (isDemo) setCurrentUser({ id: 'demo', name: 'Demo', role: 'admin', pages: ['spend', 'stock', 'winners', 'general'] })
+          if (goToSettings) {
+            hasSetInitialTab.current = true
+            setActiveTab('settings')
+          }
         }} />
       </div>
     )
   }
 
+  const showOnboardingModal = !!(dbMode && (needsOnboarding || needsFirstSync))
+
   return (
     <div className={`app theme-${theme} ${sidebarOpen ? 'sidebar-open' : ''}`}>
-      {isRefreshing && (
+      {showOnboardingModal && (
+        <OnboardingModal
+          needsOnboarding={needsOnboarding}
+          needsFirstSync={needsFirstSync}
+          onMetaTokenChange={() => checkOnboardingStatus(workspaceId)}
+          onRunFirstSync={() => handleRefreshFromMeta({ skipAds: true, skipBudgets: true, campaignDays: 7 })}
+          onFirstSyncDone={() => checkOnboardingStatus(workspaceId)}
+          isRefreshing={isRefreshing}
+        />
+      )}
+      {isRefreshing && !showOnboardingModal && (
         <div className="sync-overlay" role="alert" aria-live="polite">
           <div className="sync-overlay-content">
             <RefreshCw size={48} className="sync-spinner" />
-            <h3>Synchronisation en cours…</h3>
-            <p>Ne quittez pas cette page. Le chargement des données peut prendre plusieurs minutes.</p>
+            <h3>Sync in progress…</h3>
+            <p>Please stay on this page. Loading data can take a few minutes.</p>
           </div>
         </div>
       )}
@@ -869,28 +1007,28 @@ function App() {
         <div className="modal-overlay" onClick={() => setShowBudgetsModal(false)}>
           <div className="modal-content budgets-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Budgets campagnes (Meta API)</h3>
-              <button className="close-btn" onClick={() => setShowBudgetsModal(false)} aria-label="Fermer">
+              <h3>Campaign budgets (Meta API)</h3>
+              <button className="close-btn" onClick={() => setShowBudgetsModal(false)} aria-label="Close">
                 <X size={20} />
               </button>
             </div>
             <div className="modal-body">
               {budgetsList.length === 0 ? (
-                <p>Aucun budget. Lance &quot;Refresh from Meta&quot; ou <code>npm run fetch-budgets</code> en local.</p>
+                <p>No budgets yet. Click “Refresh from Meta” or run <code>npm run fetch-budgets</code> locally.</p>
               ) : budgetsList.filter((b) => (spendByCampaignId[b.campaignId] ?? 0) > 0).length === 0 ? (
-                <p>Aucune campagne avec spend sur la période sélectionnée.</p>
+                <p>No campaigns with spend in the selected period.</p>
               ) : (
                 <>
                   <div className="budgets-table-wrap">
                   <table className="winners-table">
                     <thead>
                       <tr>
-                        <th>Campagne</th>
+                        <th>Campaign</th>
                         <th>Account</th>
                         <th>Delivery</th>
-                        <th className="num">Budget / jour</th>
-                        <th className="num">Spend jour</th>
-                        <th className="num">Objectif / jour</th>
+                        <th className="num">Daily budget</th>
+                        <th className="num">Today spend</th>
+                        <th className="num">Daily goal</th>
                         <th className="num">Spend</th>
                       </tr>
                     </thead>
@@ -917,13 +1055,13 @@ function App() {
                           const status = (b.effectiveStatus || '').toUpperCase()
                           const adsOff = b.hasActiveAds === false
                           const isActive = status === 'ACTIVE' && !adsOff
-                          const label = adsOff ? 'Ads off' : (status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu')
+                          const label = adsOff ? 'Ads off' : (status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Unknown status')
                           return (
                           <tr key={`${b.accountId}-${b.campaignId}`}>
                             <td><code>{b.campaignName?.slice(0, 60)}{(b.campaignName?.length || 0) > 60 ? '…' : ''}</code></td>
                             <td>{b.accountName}</td>
                             <td>
-                              <span className={`delivery-status delivery-${isActive ? 'active' : 'off'}`} title="Statut de diffusion (Meta)">
+                              <span className={`delivery-status delivery-${isActive ? 'active' : 'off'}`} title="Delivery status (Meta)">
                                 <span className="delivery-dot" />
                                 {label}
                               </span>
@@ -963,9 +1101,9 @@ function App() {
                       const adsOff = withSpend.filter((b) => b.hasActiveAds === false).length
                       const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
                       const detail = withSpend.length > 0
-                        ? ` · ${active} Active${adsOff > 0 ? `, ${adsOff} Ads off` : ''}${unknown > 0 ? `, ${unknown} statut inconnu (relancer un sync Meta pour mettre à jour)` : ''}`
+                        ? ` · ${active} Active${adsOff > 0 ? `, ${adsOff} Ads off` : ''}${unknown > 0 ? `, ${unknown} unknown status (run Meta sync again to refresh)` : ''}`
                         : ''
-                      return `${withSpend.length} campagnes avec spend${detail}`
+                      return `${withSpend.length} campaigns with spend${detail}`
                     })()}
                   </p>
                 </>
@@ -1011,7 +1149,24 @@ function App() {
                   key={id}
                   className={`nav-btn ${activeTab === id ? 'active' : ''}`}
                   onClick={() => {
-                    setActiveTab(id)
+                    // Settings/Admin are gated elsewhere (owner/admin), not by page permissions.
+                    const isUngatedPage = id === 'settings' || id === 'admin'
+                    if (needsOnboarding && id !== 'settings') {
+                      setApiError('Please configure your Meta token in Settings to continue.')
+                      setActiveTab('settings')
+                    } else if (needsFirstSync && id !== 'settings') {
+                      setApiError('Run your first sync in Settings to load data, then you can access reports.')
+                      setActiveTab('settings')
+                    } else if (!isUngatedPage && id !== 'general' && !canAccess(id)) {
+                      setApiError('You do not have access to this page. Ask an admin to grant access.')
+                      setActiveTab(firstAccessiblePage)
+                    } else if (id === 'general' && !canAccess('general')) {
+                      setApiError('You do not have access to this page. Ask an admin to grant access.')
+                      setActiveTab(firstAccessiblePage)
+                    } else {
+                      setApiError(null)
+                      setActiveTab(id)
+                    }
                     setSidebarOpen(false)
                   }}
                   title={label}
@@ -1023,6 +1178,22 @@ function App() {
             </div>
           ))}
         </nav>
+        {dbMode && currentUser?.workspaces?.length > 0 && (
+          <div className="sidebar-workspace">
+            <label htmlFor="sidebar-workspace-select" className="sidebar-workspace-label">Workspace</label>
+            <select
+              id="sidebar-workspace-select"
+              className="sidebar-workspace-select"
+              value={workspaceId || ''}
+              onChange={(e) => handleWorkspaceChange(e.target.value || null)}
+              title="Changer de workspace"
+            >
+              {currentUser.workspaces.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="sidebar-actions">
           <button
             className="theme-btn"
@@ -1066,7 +1237,7 @@ function App() {
               {activeTab === 'budget' && 'Reporting Ads Manager — Budget'}
               {activeTab === 'winners' && 'Winners — Ads by spend & ROAS'}
               {activeTab === 'stock' && 'Stock'}
-              {activeTab === 'general' && 'General — Vue globale'}
+              {activeTab === 'general' && 'General — Overview'}
               {activeTab === 'admin' && 'Administration — Members'}
               {activeTab === 'settings' && 'Settings — Meta token'}
             </h1>
@@ -1087,14 +1258,14 @@ function App() {
             <div className="api-error-actions">
               {(activeTab === 'spend' || activeTab === 'general' || activeTab === 'budget') && (
                 <>
-                  <button onClick={fetchSpend}>Recharger</button>
+                  <button onClick={fetchSpend}>Reload</button>
                   {dbMode && (
                     <button
                       className="secondary"
                       onClick={() => handleRefreshFromMeta({ skipAds: true })}
-                      title="Sync Spend uniquement (plus rapide)"
+                      title="Sync spend only (faster)"
                     >
-                      Sync rapide
+                      Quick sync
                     </button>
                   )}
                 </>
@@ -1110,10 +1281,10 @@ function App() {
                     products: filterProduct,
                   },
                 })}>
-                  Réessayer Sync Winners
+                  Retry Winners sync
                 </button>
               )}
-              <button className="secondary" onClick={() => setApiError(null)}>Fermer</button>
+              <button className="secondary" onClick={() => setApiError(null)}>Close</button>
             </div>
           </div>
         )}
@@ -1191,21 +1362,33 @@ function App() {
                   </select>
                 </div>
                 {dbMode && (
-                  <button
-                    className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
-                    onClick={() => handleRefreshFromMeta({ skipAds: true })}
-                    disabled={isRefreshing}
-                    title="Sync Spend (campaigns) uniquement — plus rapide, évite timeout"
-                  >
-                    <RefreshCw size={16} />
-                    {isRefreshing ? 'Syncing…' : 'Refresh from Meta'}
-                  </button>
+                  <>
+                    <button
+                      className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
+                      onClick={() => handleRefreshFromMeta({ skipAds: true })}
+                      disabled={isRefreshing}
+                      title="Sync spend (campaigns) only — faster, avoids timeouts"
+                    >
+                      <RefreshCw size={16} />
+                      {isRefreshing ? 'Syncing…' : 'Refresh from Meta'}
+                    </button>
+                    <button
+                      className="export-btn"
+                      onClick={() => handleRefreshFromMeta({ skipAds: true, campaignDays: 30 })}
+                      disabled={isRefreshing || !Array.isArray(filterAccount) || filterAccount.length === 0}
+                      title={Array.isArray(filterAccount) && filterAccount.length
+                        ? 'Backfill last 30 days for selected ad account(s)'
+                        : 'Select at least 1 ad account to backfill'}
+                    >
+                      Backfill 30d
+                    </button>
+                  </>
                 )}
                 <button
                   className="export-btn"
                   onClick={fetchBudgets}
                   disabled={budgetsLoading}
-                  title="Voir les budgets des campagnes (Meta API)"
+                  title="View campaign budgets (Meta API)"
                 >
                   {budgetsLoading ? <span className="spinner" /> : <DollarSign size={16} />}
                   Budgets
@@ -1219,30 +1402,30 @@ function App() {
 
             <section className="cards-row">
               <div className="stat-card">
-                <div className="stat-card-label">Budget total / jour</div>
+                <div className="stat-card-label">Total daily budget</div>
                 <div className="stat-card-value">
                   {totalDailyBudget != null ? `$${Number(totalDailyBudget).toLocaleString()}` : '-'}
                 </div>
                 <div className="stat-card-sub">
-                  {totalDailyBudget != null && filteredSpendByAccount.length ? `sur ${filteredSpendByAccount.length} comptes` : 'Meta API'}
+                  {totalDailyBudget != null && filteredSpendByAccount.length ? `across ${filteredSpendByAccount.length} accounts` : 'Meta API'}
                 </div>
               </div>
               <div className="stat-card">
-                <div className="stat-card-label">Spend aujourd&apos;hui</div>
+                <div className="stat-card-label">Today spend</div>
                 <div className="stat-card-value">
                   {totalSpendToday != null ? `$${Number(totalSpendToday).toLocaleString()}` : '-'}
                 </div>
-                <div className="stat-card-sub">ce jour</div>
+                <div className="stat-card-sub">today</div>
               </div>
               <div className={`stat-card ${budgetPercent >= 90 && totalDailyBudget ? 'alert' : 'accent'}`}>
-                <div className="stat-card-label">Budget jour utilisé</div>
+                <div className="stat-card-label">Daily budget used</div>
                 <div className="stat-card-value">{totalDailyBudget ? `${budgetPercent}%` : '-'}</div>
-                <div className="stat-card-sub">spend aujourd&apos;hui / budget jour</div>
+                <div className="stat-card-sub">today spend / daily budget</div>
               </div>
               <div className="stat-card">
-                <div className="stat-card-label">Total Spend (période)</div>
+                <div className="stat-card-label">Total spend (period)</div>
                 <div className="stat-card-value">${totalSpend.toLocaleString()}</div>
-                <div className="stat-card-sub">{daysInRange != null ? `sur ${daysInRange} j` : 'période sélectionnée'}</div>
+                <div className="stat-card-sub">{daysInRange != null ? `over ${daysInRange} days` : 'selected period'}</div>
               </div>
               <div className="stat-card">
                 <div className="stat-card-label">Avg Spend / Account</div>
@@ -1336,7 +1519,7 @@ function App() {
                         <th>Account</th>
                         <th>Budget / jour</th>
                         <th>Spend jour</th>
-                        <th>Spend période</th>
+                        <th>Period spend</th>
                         <th>%</th>
                       </tr>
                     </thead>
@@ -1499,18 +1682,18 @@ function App() {
                     className={`export-btn refresh-meta-btn accent ${isRefreshing ? 'loading' : ''}`}
                     onClick={() => handleRefreshFromMeta({ skipAds: true })}
                     disabled={isRefreshing}
-                    title="Synchroniser campagnes + budgets (effective_status) depuis Meta"
+                    title="Sync campaigns + budgets (effective_status) from Meta"
                   >
                     <RefreshCw size={16} />
-                    {isRefreshing ? 'Synchro…' : 'Lancer la synchro Meta'}
+                    {isRefreshing ? 'Syncing…' : 'Run Meta sync'}
                   </button>
                 )}
               </div>
             </section>
             {!dbMode ? (
-              <p className="empty-state">Connecte-toi en mode DB pour voir les budgets et lancer la synchro Meta.</p>
+              <p className="empty-state">Sign in (DB mode) to view budgets and run Meta sync.</p>
             ) : budgetsList.length === 0 && !budgetsLoading ? (
-              <p className="empty-state">Aucun budget. Clique sur &quot;Lancer la synchro Meta&quot; pour récupérer les campagnes et leurs statuts (Active / Paused).</p>
+              <p className="empty-state">No budgets yet. Click “Run Meta sync” to fetch campaigns and their delivery status (Active / Paused).</p>
             ) : (
               <>
                 <div className="budgets-table-wrap">
@@ -1549,13 +1732,13 @@ function App() {
                           const status = (b.effectiveStatus || '').toUpperCase()
                           const adsOff = b.hasActiveAds === false
                           const isActive = status === 'ACTIVE' && !adsOff
-                          const label = adsOff ? 'Ads off' : (status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Statut inconnu')
+                          const label = adsOff ? 'Ads off' : (status === 'ACTIVE' ? 'Active' : status === 'PAUSED' ? 'Paused' : status ? status.charAt(0) + status.slice(1).toLowerCase() : 'Unknown status')
                           return (
                             <tr key={`${b.accountId}-${b.campaignId}`}>
                               <td><code>{b.campaignName?.slice(0, 60)}{(b.campaignName?.length || 0) > 60 ? '…' : ''}</code></td>
                               <td>{b.accountName}</td>
                               <td>
-                                <span className={`delivery-status delivery-${isActive ? 'active' : 'off'}`} title="Statut de diffusion (Meta)">
+                                <span className={`delivery-status delivery-${isActive ? 'active' : 'off'}`} title="Delivery status (Meta)">
                                   <span className="delivery-dot" />
                                   {label}
                                 </span>
@@ -1595,14 +1778,14 @@ function App() {
                     const adsOff = withSpend.filter((b) => b.hasActiveAds === false).length
                     const unknown = withSpend.filter((b) => !b.effectiveStatus || b.effectiveStatus === '').length
                     const detail = withSpend.length > 0
-                      ? ` · ${active} Active${adsOff > 0 ? `, ${adsOff} Ads off` : ''}${unknown > 0 ? `, ${unknown} statut inconnu (relancer la synchro pour mettre à jour)` : ''}`
+                      ? ` · ${active} Active${adsOff > 0 ? `, ${adsOff} Ads off` : ''}${unknown > 0 ? `, ${unknown} unknown status (run sync again to refresh)` : ''}`
                       : ''
-                    return `${withSpend.length} campagnes avec spend${detail}`
+                    return `${withSpend.length} campaigns with spend${detail}`
                   })()}
                 </p>
               </>
             )}
-            {budgetsLoading && <p className="loading-inline">Chargement des budgets…</p>}
+            {budgetsLoading && <p className="loading-inline">Loading budgets…</p>}
           </div>
         )}
 
@@ -1637,7 +1820,7 @@ function App() {
                         },
                       })}
                       disabled={isRefreshing}
-                      title="Synchroniser les Winners depuis Meta"
+                      title="Sync Winners from Meta"
                     >
                       <RefreshCw size={16} />
                       {isRefreshing ? 'Sync…' : 'Sync Winners'}
@@ -1709,7 +1892,7 @@ function App() {
             <section className="table-section full-width">
               {filteredWinners.length === 0 && (
                 <p className="empty-state-msg">
-                  Aucune donnée winners. Clique sur <strong>Sync Winners</strong> ci-dessus pour charger les ads depuis Meta.
+                  No Winners data yet. Click <strong>Sync Winners</strong> above to load ads from Meta.
                 </p>
               )}
               <div className="table-wrap">
@@ -1788,15 +1971,15 @@ function App() {
           const insights = []
           if (topMarket && totalSpendGeneral > 0) {
             const pct = ((topMarket.spend / totalSpendGeneral) * 100).toFixed(0)
-            insights.push({ text: `${topMarket.market} représente ${pct}% du spend total`, icon: 'market' })
+            insights.push({ text: `${topMarket.market} represents ${pct}% of total spend`, icon: 'market' })
           }
           if (topProduct && totalSpendGeneral > 0) {
             const pct = ((topProduct.spend / totalSpendGeneral) * 100).toFixed(0)
-            insights.push({ text: `${topProduct.product} est le produit le plus investi (${pct}%)`, icon: 'product' })
+            insights.push({ text: `${topProduct.product} is the top invested product (${pct}%)`, icon: 'product' })
           }
-          if (marketCount > 0) insights.push({ text: `${marketCount} marchés actifs sur la période`, icon: 'globe' })
-          if (campaignCount > 0) insights.push({ text: `${campaignCount} campagnes avec du spend`, icon: 'campaign' })
-          if (avgCtr != null) insights.push({ text: `CTR moyen : ${avgCtr}%`, icon: 'ctr' })
+          if (marketCount > 0) insights.push({ text: `${marketCount} active markets in this period`, icon: 'globe' })
+          if (campaignCount > 0) insights.push({ text: `${campaignCount} campaigns with spend`, icon: 'campaign' })
+          if (avgCtr != null) insights.push({ text: `Average CTR: ${avgCtr}%`, icon: 'ctr' })
 
           return (
           <div className="content general-content">
@@ -1823,8 +2006,8 @@ function App() {
             <div className="intro-card general-intro">
               <Sparkles size={32} />
               <div>
-                <h3>General — Vue globale</h3>
-                <p>Synthèse des opérations marketing sur la période sélectionnée.</p>
+                <h3>General — Overview</h3>
+                <p>High-level summary for the selected period.</p>
               </div>
             </div>
 
@@ -1840,17 +2023,17 @@ function App() {
                 <div className="stat-card-sub">{totalClicks.toLocaleString()} clics</div>
               </div>
               <div className="stat-card">
-                <div className="stat-card-label">CTR moyen</div>
+                <div className="stat-card-label">Average CTR</div>
                 <div className="stat-card-value">{avgCtr ? `${avgCtr}%` : '—'}</div>
-                <div className="stat-card-sub">{campaignCount} campagnes</div>
+                <div className="stat-card-sub">{campaignCount} campaigns</div>
               </div>
               <div className="stat-card">
-                <div className="stat-card-label">Top marché</div>
+                <div className="stat-card-label">Top market</div>
                 <div className="stat-card-value">{topMarket?.market || '—'}</div>
                 <div className="stat-card-sub">{topMarket ? `$${(topMarket.spend || 0).toLocaleString()}` : 'N/A'}</div>
               </div>
               <div className="stat-card">
-                <div className="stat-card-label">Top produit</div>
+                <div className="stat-card-label">Top product</div>
                 <div className="stat-card-value">{topProduct ? (topProduct.product?.length > 15 ? topProduct.product.slice(0, 15) + '…' : topProduct.product) : '—'}</div>
                 <div className="stat-card-sub">{topProduct ? `$${(topProduct.spend || 0).toLocaleString()}` : 'N/A'}</div>
               </div>
@@ -1858,7 +2041,7 @@ function App() {
 
             <div className="general-grid">
               <section className="chart-section general-chart">
-                <h3>Évolution du spend</h3>
+                <h3>Spend trend</h3>
                 <div className="chart-wrapper" key={`general-trend-${totalSpendGeneral}-${(spendTrendForChart || []).length}`}>
                   <ResponsiveContainer width="100%" height={240}>
                     <LineChart data={Array.isArray(spendTrendForChart) ? spendTrendForChart : []}>
@@ -1894,7 +2077,7 @@ function App() {
                 </div>
               </section>
               <section className="chart-section general-chart">
-                <h3>Répartition par marché</h3>
+                <h3>Market breakdown</h3>
                 {(() => {
                   const marketData = Array.isArray(spendByMarket) && spendByMarket.length ? spendByMarket : [{ market: 'No data', spend: 0, fill: '#444' }]
                   const marketTotal = marketData.reduce((s, m) => s + (m.spend || 0), 0)
@@ -1929,11 +2112,11 @@ function App() {
 
             <div className="general-tables-row">
               <section className="table-section general-table">
-                <h3>Top 5 produits</h3>
+                <h3>Top 5 products</h3>
                 <div className="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Produit</th><th className="num">Spend</th><th className="num">CTR</th></tr>
+                      <tr><th>Product</th><th className="num">Spend</th><th className="num">CTR</th></tr>
                     </thead>
                     <tbody>
                       {top5Products.map((r, i) => (
@@ -1943,7 +2126,7 @@ function App() {
                           <td className="num">{r.ctr ? `${r.ctr}%` : '—'}</td>
                         </tr>
                       ))}
-                      {top5Products.length === 0 && <tr><td colSpan={3} className="empty">Aucune donnée</td></tr>}
+                      {top5Products.length === 0 && <tr><td colSpan={3} className="empty">No data</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -1962,7 +2145,7 @@ function App() {
                           <td className="num">${(r.spend || 0).toLocaleString()}</td>
                         </tr>
                       ))}
-                      {top5Accounts.length === 0 && <tr><td colSpan={2} className="empty">Aucune donnée</td></tr>}
+                      {top5Accounts.length === 0 && <tr><td colSpan={2} className="empty">No data</td></tr>}
                     </tbody>
                   </table>
                 </div>
@@ -1971,7 +2154,7 @@ function App() {
 
             {insights.length > 0 && (
               <section className="general-insights">
-                <h3>Points clés</h3>
+                <h3>Key takeaways</h3>
                 <ul>
                   {insights.map((item, i) => (
                     <li key={i}>{item.text}</li>
@@ -1981,8 +2164,8 @@ function App() {
             )}
 
             <div className="general-ai-card">
-              <h3><Sparkles size={20} /> IA recommendations</h3>
-              <p>Bientôt disponible : une IA avec vue globale sur les opérations marketing — feedback, suggestions, reconnaissance de patterns (formats gagnants, marchés sous-optimisés).</p>
+              <h3><Sparkles size={20} /> AI recommendations</h3>
+              <p>Coming soon: AI recommendations with a global view of marketing operations — feedback, suggestions, and pattern detection (winning formats, under-optimized markets).</p>
             </div>
           </div>
           )
@@ -1996,7 +2179,16 @@ function App() {
 
         {activeTab === 'settings' && (
           <div className="content settings-content">
-            <Settings />
+            <Settings
+              workspaceId={workspaceId}
+              onWorkspaceChange={handleWorkspaceChange}
+              onMetaTokenChange={() => checkOnboardingStatus(workspaceId)}
+              onFirstSyncDone={() => checkOnboardingStatus(workspaceId)}
+              needsOnboarding={needsOnboarding}
+              needsFirstSync={needsFirstSync}
+              onRunFirstSync={() => handleRefreshFromMeta({ skipAds: true, skipBudgets: true, campaignDays: 7 })}
+              isRefreshing={isRefreshing}
+            />
           </div>
         )}
 
@@ -2042,7 +2234,7 @@ function App() {
             <section className="table-section">
               <h3>Stock by Warehouse (J+7 projection)</h3>
               {filteredStock.length === 0 && (
-                <p className="empty-state-msg">Aucune donnée stock — les données stock ne proviennent pas de Meta.</p>
+                <p className="empty-state-msg">No stock data — stock does not come from Meta.</p>
               )}
               <div className="table-wrap">
                 <table>

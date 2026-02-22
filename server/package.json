@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js",
+    "dev": "node index.js",
+    "dev:watch": "node --watch index.js",
     "query-meta": "node query-meta.js",
     "refresh-products": "node refresh-product-names.js",
     "db:seed": "node db/seed.js",

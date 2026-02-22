@@ -27,8 +27,8 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10)
 }
 
-export async function runFullSync(accessToken, forceFull = false, skipAds = false, winnersOnly = false, winnersDays = null, accountNames = null, winnersFilters = null) {
-  console.log('[runFullSync] Début', { forceFull, skipAds, winnersOnly, winnersDays })
+export async function runFullSync(accessToken, workspaceId, forceFull = false, skipAds = false, skipBudgets = false, winnersOnly = false, winnersDays = null, campaignDays = null, accountNames = null, winnersFilters = null) {
+  console.log('[runFullSync] Début', { workspaceId: workspaceId || null, forceFull, skipAds, skipBudgets, winnersOnly, winnersDays, campaignDays })
   
   let since = FULL_SINCE
   let until = today()
@@ -42,7 +42,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     since = addDays(until, -Math.min(days, 365))
     console.log('[runFullSync] Mode winnersOnly:', { since, until, days, requested })
   } else if (!forceFull) {
-    const last = await db.getLatestSyncRun()
+    const last = await db.getLatestSyncRun(workspaceId)
     const lastUntilVal = last?.date_until ?? last?.dateUntil
     if (lastUntilVal) {
       const lastUntil = typeof lastUntilVal === 'string' ? lastUntilVal : lastUntilVal?.toISOString?.()?.slice(0, 10)
@@ -57,7 +57,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
         console.log('[runFullSync] À jour (campaigns) → backfill derniers jours', { since, until })
         // Si la table campaigns est vide (ou a été vidée), on force une resync "first sync" (30j)
         try {
-          const todayCount = await db.countCampaigns(until, until)
+          const todayCount = await db.countCampaigns(until, until, workspaceId)
           if (!todayCount) {
             skipCampaignsSync = false
             since = addDays(until, -FIRST_SYNC_DAYS)
@@ -83,8 +83,19 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     console.log('[runFullSync] Mode full:', { since, until })
   }
 
+  // Backfill ciblé (campagnes) : utile si l'historique DB est incomplet mais qu'on veut resync N jours
+  if (!winnersOnly && campaignDays != null) {
+    const requested = Number(campaignDays)
+    const days = Math.min(Math.max(1, requested || 0), 90)
+    since = addDays(until, -(days - 1))
+    incremental = true
+    skipCampaignsSync = false
+    alreadyUpToDate = false
+    console.log('[runFullSync] Mode campaignDays backfill:', { since, until, days, requested })
+  }
+
   const timeRange = JSON.stringify({ since, until })
-  const syncRun = await db.createSyncRun(since, until, 'running')
+  const syncRun = await db.createSyncRun(since, until, 'running', workspaceId)
   console.log('[runFullSync] SyncRun créé:', syncRun.id)
 
   try {
@@ -111,7 +122,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       try {
         console.log(`[runFullSync] Account ${acc.name} (${acc.id})...`)
         const insights = await fetchMetaDataAllPages(accessToken, `/${acc.id}/insights`, {
-          fields: 'spend,impressions,clicks,campaign_name,campaign_id',
+          fields: 'spend,impressions,clicks,campaign_name,campaign_id,date_start,date_stop',
           level: 'campaign',
           time_increment: 1,
           limit: 500,
@@ -129,7 +140,7 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
             accountName: acc.name,
             campaignId: c.campaign_id,
             campaignName: c.campaign_name,
-            date: c.date_start || c.date_stop || null,
+            date: c.date_start || c.date_stop || until || null,
             spend: parseFloat(c.spend || 0),
             impressions: parseInt(c.impressions || 0, 10),
             clicks: parseInt(c.clicks || 0, 10),
@@ -149,15 +160,15 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
     // Écrire les campagnes seulement si on les a réellement sync (sinon, on risque d'écraser avec [])
     if (!winnersOnly && !skipCampaignsSync) {
       if (incremental && results.length > 0) {
-        await db.deleteCampaignsFromDate(since)
-        await db.insertCampaigns(syncRun.id, results)
+        await db.deleteCampaignsFromDate(since, workspaceId, accountNames)
+        await db.insertCampaigns(syncRun.id, results, workspaceId)
       } else if (!incremental) {
-        await db.replaceCampaigns(syncRun.id, results)
+        await db.replaceCampaigns(syncRun.id, results, workspaceId)
       }
     }
 
     // Sync budgets (campaign level)
-    if (!winnersOnly) {
+    if (!winnersOnly && !skipBudgets) {
       console.log('[runFullSync] Sync budgets...')
       budgetRows = []
       for (const acc of accounts) {
@@ -197,7 +208,9 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
           console.warn(`Skip budgets for ${acc.name}:`, e.message)
         }
       }
-      if (budgetRows.length > 0) await dbBudgets.upsertBudgets(budgetRows)
+      if (budgetRows.length > 0) await dbBudgets.upsertBudgets(workspaceId, budgetRows)
+    } else if (!winnersOnly && skipBudgets) {
+      console.log('[runFullSync] Skip sync budgets (option skipBudgets=1).')
     }
 
     // Sync ads_raw pour Winners (toujours si winnersOnly, sinon si !skipAds)
@@ -279,10 +292,10 @@ export async function runFullSync(accessToken, forceFull = false, skipAds = fals
       }
     }
     if (incremental && adsRaw.length > 0) {
-      await db.deleteAdsRawFromDate(since)
-      await db.insertAdsRaw(syncRun.id, adsRaw)
+      await db.deleteAdsRawFromDate(since, workspaceId)
+      await db.insertAdsRaw(syncRun.id, adsRaw, workspaceId)
     } else if (!incremental) {
-      await db.replaceAdsRaw(syncRun.id, adsRaw)
+      await db.replaceAdsRaw(syncRun.id, adsRaw, workspaceId)
     }
     }
 

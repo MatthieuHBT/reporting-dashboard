@@ -10,7 +10,7 @@ export default function Admin({ dbMode, onSave }) {
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState(null)
   const [showForm, setShowForm] = useState(false)
-  const [newMember, setNewMember] = useState({ name: '', email: '', password: 'VpTeam2026!', role: 'team', pages: ['spend'] })
+  const [newMember, setNewMember] = useState({ name: '', email: '', password: 'VpTeam2026!', role: 'team', pages: [...PAGE_IDS] })
 
   const fetchMembers = useCallback(async () => {
     if (!dbMode) return
@@ -53,7 +53,7 @@ export default function Admin({ dbMode, onSave }) {
       onSave?.()
     } catch (err) {
       console.error(err)
-      setSaveError(err.message || 'Échec de la sauvegarde')
+      setSaveError(err.message || 'Save failed')
     } finally {
       setSaved(false)
     }
@@ -91,7 +91,7 @@ export default function Admin({ dbMode, onSave }) {
     return (
       <div className="admin-page">
         <div className="admin-empty-state">
-          <p>Connectez-vous avec un compte pour gérer les membres.</p>
+          <p>Sign in to manage members.</p>
         </div>
       </div>
     )
@@ -100,7 +100,7 @@ export default function Admin({ dbMode, onSave }) {
   if (loading) {
     return (
       <div className="admin-page">
-        <div className="admin-loading">Chargement...</div>
+        <div className="admin-loading">Loading...</div>
       </div>
     )
   }
@@ -225,7 +225,7 @@ export default function Admin({ dbMode, onSave }) {
           </tbody>
         </table>
         {members.length === 0 && (
-          <div className="admin-empty-table">Aucun membre.</div>
+          <div className="admin-empty-table">No members.</div>
         )}
       </div>
     </div>
