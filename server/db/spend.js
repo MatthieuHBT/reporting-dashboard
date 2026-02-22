@@ -202,6 +202,16 @@ export async function updateSyncRun(id, { status, campaignsCount, errorMessage }
   `
 }
 
+export async function deleteWorkspaceSpendData(workspaceId) {
+  guard()
+  if (!workspaceId) throw new Error('workspaceId required')
+  const wid = String(workspaceId)
+  // Ordre: supprimer les faits, puis les runs (références ON DELETE SET NULL).
+  await sql`DELETE FROM campaigns WHERE workspace_id = ${wid}`
+  await sql`DELETE FROM ads_raw WHERE workspace_id = ${wid}`
+  await sql`DELETE FROM sync_runs WHERE workspace_id = ${wid}`
+}
+
 /** Supprime les campagnes à partir d'une date (pour sync incrémentale) */
 export async function deleteCampaignsFromDate(since, workspaceId = null, accountNames = null) {
   guard()

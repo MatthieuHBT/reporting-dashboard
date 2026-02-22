@@ -108,6 +108,7 @@ export const api = {
   workspaces: {
     list: () => request('/workspaces'),
     create: (name) => request('/workspaces', { method: 'POST', body: JSON.stringify({ name: String(name || '').trim() }) }),
+    resetAndSync: (opts = {}) => request('/workspace/reset-and-sync', { method: 'POST', body: JSON.stringify(opts || {}), timeout: SYNC_TIMEOUT }),
     members: {
       list: () => request('/workspace/members'),
       add: (email, role) => request('/workspace/members', { method: 'POST', body: JSON.stringify({ email: String(email || '').trim(), role: role || 'member' }) }),

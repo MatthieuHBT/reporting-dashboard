@@ -710,6 +710,44 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
   }
 })
 
+// Reset (purge) données d'un workspace puis resync Meta (owner uniquement)
+app.post('/api/workspace/reset-and-sync', requireDbUser, requireWorkspaceOwner, asyncHandler(async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  if (!req.workspaceId) return res.status(400).json({ error: 'workspaceId required' })
+
+  const body = req.body || {}
+  const requestedDays = body?.campaignDays != null ? Number(body.campaignDays) : 30
+  const campaignDays = Math.min(Math.max(1, isNaN(requestedDays) ? 30 : requestedDays), 90)
+  const includeWinners = body?.includeWinners === true
+  const skipAds = !includeWinners
+
+  // Petit "ensure" pour éviter les erreurs ON CONFLICT / colonne manquante en prod.
+  try {
+    const { sql } = await import('./db/index.js')
+    // campaign_budgets peut exister sans workspace_id (ancienne version) → ajouter + supprimer legacy NULL pour éviter conflits
+    await sql`ALTER TABLE campaign_budgets ADD COLUMN IF NOT EXISTS workspace_id UUID`.catch(() => {})
+    await sql`DELETE FROM campaign_budgets WHERE workspace_id IS NULL`.catch(() => {})
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS workspace_id UUID`.catch(() => {})
+  } catch (_) {}
+
+  const { deleteWorkspaceSpendData } = await import('./db/spend.js')
+  const { deleteWorkspaceBudgets } = await import('./db/budgets.js')
+  await deleteWorkspaceBudgets(req.workspaceId)
+  await deleteWorkspaceSpendData(req.workspaceId)
+
+  // Invalider le cache accounts (si présent)
+  try { workspaceAccountsCache.delete(String(req.workspaceId)) } catch {}
+
+  const { getMetaToken } = await import('./db/settings.js')
+  const metaToken = await getMetaToken(req.workspaceId)
+  if (!metaToken) return res.status(400).json({ error: 'Configure your Meta token in Settings first' })
+
+  const { runFullSync } = await import('./services/syncToDb.js')
+  const result = await runFullSync(metaToken, req.workspaceId, false, skipAds, false, false, null, campaignDays, null, null)
+
+  return res.json({ ok: true, workspaceId: req.workspaceId, campaignDays, includeWinners, ...result })
+}))
+
 function requireAuth(req, res, next) {
   if (!storedToken) {
     return res.status(401).json({ error: 'Not authenticated. Please connect with Meta.' })

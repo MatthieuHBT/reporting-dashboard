@@ -219,6 +219,24 @@ export default function Settings({ workspaceId, onWorkspaceChange, onMetaTokenCh
               {isRefreshing ? <span className="spinner" /> : <RefreshCw size={18} />}
               {isRefreshing ? 'Syncing…' : 'Sync from Meta (30 days)'}
             </button>
+            <button
+              type="button"
+              className="save-btn outline"
+              disabled={isRefreshing}
+              onClick={async () => {
+                setFirstSyncError('')
+                try {
+                  // Reset du workspace + resync propre (30j). Owner/admin uniquement côté API.
+                  await api.workspaces.resetAndSync({ campaignDays: 30, includeWinners: false })
+                  onFirstSyncDone?.()
+                } catch (e) {
+                  setFirstSyncError(e?.message || 'Reset+sync failed')
+                }
+              }}
+              title="Purges workspace data then resync (owner only)"
+            >
+              Reset + resync (30 days)
+            </button>
           </div>
           {firstSyncError && (
             <div className="settings-error">

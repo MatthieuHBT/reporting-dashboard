@@ -121,3 +121,10 @@ export async function upsertBudgets(workspaceId, budgets) {
     }
   }
 }
+
+export async function deleteWorkspaceBudgets(workspaceId) {
+  guard()
+  if (!workspaceId) throw new Error('workspaceId required')
+  const wid = String(workspaceId)
+  await sql`DELETE FROM campaign_budgets WHERE workspace_id = ${wid}`
+}
