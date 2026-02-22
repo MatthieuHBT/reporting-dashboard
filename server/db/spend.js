@@ -80,17 +80,78 @@ export async function getCampaigns(since, until, accountName = null, workspaceId
 
   let rows
   if (since && until && namePattern) {
-    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until} AND campaign_name ~* ${namePattern} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`
+      SELECT *
+      FROM (
+        SELECT DISTINCT ON (account_id, campaign_id, date) *
+        FROM campaigns
+        WHERE workspace_id = ${wid}
+          AND date >= ${since} AND date <= ${until}
+          AND campaign_name ~* ${namePattern}
+        ORDER BY account_id, campaign_id, date, created_at DESC
+      ) t
+      ORDER BY campaign_name, date DESC, spend DESC
+    `
   } else if (namePattern) {
-    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND campaign_name ~* ${namePattern} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`
+      SELECT *
+      FROM (
+        SELECT DISTINCT ON (account_id, campaign_id, date) *
+        FROM campaigns
+        WHERE workspace_id = ${wid}
+          AND campaign_name ~* ${namePattern}
+        ORDER BY account_id, campaign_id, date, created_at DESC
+      ) t
+      ORDER BY campaign_name, date DESC, spend DESC
+    `
   } else if (since && until && accountName) {
-    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until} AND account_name = ${accountName} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`
+      SELECT *
+      FROM (
+        SELECT DISTINCT ON (account_id, campaign_id, date) *
+        FROM campaigns
+        WHERE workspace_id = ${wid}
+          AND date >= ${since} AND date <= ${until}
+          AND account_name = ${accountName}
+        ORDER BY account_id, campaign_id, date, created_at DESC
+      ) t
+      ORDER BY campaign_name, date DESC, spend DESC
+    `
   } else if (accountName) {
-    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND account_name = ${accountName} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`
+      SELECT *
+      FROM (
+        SELECT DISTINCT ON (account_id, campaign_id, date) *
+        FROM campaigns
+        WHERE workspace_id = ${wid}
+          AND account_name = ${accountName}
+        ORDER BY account_id, campaign_id, date, created_at DESC
+      ) t
+      ORDER BY campaign_name, date DESC, spend DESC
+    `
   } else if (since && until) {
-    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} AND date >= ${since} AND date <= ${until} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`
+      SELECT *
+      FROM (
+        SELECT DISTINCT ON (account_id, campaign_id, date) *
+        FROM campaigns
+        WHERE workspace_id = ${wid}
+          AND date >= ${since} AND date <= ${until}
+        ORDER BY account_id, campaign_id, date, created_at DESC
+      ) t
+      ORDER BY campaign_name, date DESC, spend DESC
+    `
   } else {
-    rows = await sql`SELECT * FROM campaigns WHERE workspace_id = ${wid} ORDER BY campaign_name, date DESC, spend DESC`
+    rows = await sql`
+      SELECT *
+      FROM (
+        SELECT DISTINCT ON (account_id, campaign_id, date) *
+        FROM campaigns
+        WHERE workspace_id = ${wid}
+        ORDER BY account_id, campaign_id, date, created_at DESC
+      ) t
+      ORDER BY campaign_name, date DESC, spend DESC
+    `
   }
   return rows.map(rowToCampaign)
 }
