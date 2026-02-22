@@ -14,6 +14,38 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, 'data')
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-prod'
 
+// Cache (mémoire) des ad accounts par workspace pour éviter d'appeler Meta à chaque refresh UI.
+// Clé: workspaceId, Valeur: { token, ts, accounts: [{id,name}] }
+const WORKSPACE_ACCOUNTS_CACHE_TTL_MS = 5 * 60 * 1000
+const workspaceAccountsCache = new Map()
+
+async function getWorkspaceMetaAccounts(workspaceId) {
+  if (!hasDb() || !workspaceId) return null
+  let token = null
+  try {
+    const { getMetaToken } = await import('./db/settings.js')
+    token = await getMetaToken(workspaceId)
+  } catch {
+    return null
+  }
+  if (!token) return null
+
+  const cached = workspaceAccountsCache.get(String(workspaceId))
+  if (cached && cached.token === token && (Date.now() - cached.ts) < WORKSPACE_ACCOUNTS_CACHE_TTL_MS) {
+    return cached.accounts || []
+  }
+  try {
+    const data = await fetchMetaData(token, '/me/adaccounts', { fields: 'id,name', limit: 500 })
+    const accounts = (data.data || [])
+      .map((a) => ({ id: a.id ? String(a.id) : null, name: a.name ? String(a.name) : null }))
+      .filter((a) => a.id || a.name)
+    workspaceAccountsCache.set(String(workspaceId), { token, ts: Date.now(), accounts })
+    return accounts
+  } catch {
+    return null
+  }
+}
+
 /** Wrapper pour que les erreurs async soient passées au handler d'erreur (réponse toujours JSON pour /api) */
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
@@ -788,9 +820,29 @@ app.get('/api/reports/spend', requireDbUser, asyncHandler(async (req, res) => {
     }
     try {
       const dbSpend = await import('./db/spend.js')
-      const filteredCampaigns = await dbSpend.getCampaigns(range?.since, range?.until, accountName, req.workspaceId)
-      const fromDb = await dbSpend.getDistinctAccounts(req.workspaceId)
-      const allAccounts = await mergeAllAdAccounts(fromDb, req.workspaceId)
+      let filteredCampaigns = await dbSpend.getCampaigns(range?.since, range?.until, accountName, req.workspaceId)
+
+      // Sécurité: ne compter que les ad accounts accessibles par le token Meta du workspace.
+      // Utile si la BDD contient de l'historique "mélangé" (ex. anciennes lignes backfillées dans un workspace legacy).
+      const metaAccounts = await getWorkspaceMetaAccounts(req.workspaceId)
+      if (Array.isArray(metaAccounts) && metaAccounts.length) {
+        const allowedIds = new Set(metaAccounts.map((a) => a.id).filter(Boolean))
+        const allowedNames = new Set(metaAccounts.map((a) => a.name).filter(Boolean))
+        filteredCampaigns = filteredCampaigns.filter((c) => {
+          const idOk = c.accountId && allowedIds.has(String(c.accountId))
+          const nameOk = c.accountName && allowedNames.has(String(c.accountName))
+          return idOk || nameOk
+        })
+      }
+
+      // Liste des accounts pour le dropdown (priorité au token Meta du workspace).
+      let allAccounts = []
+      if (Array.isArray(metaAccounts) && metaAccounts.length) {
+        allAccounts = [...new Set(metaAccounts.map((a) => a.name).filter(Boolean))].sort()
+      } else {
+        const fromDb = await dbSpend.getDistinctAccounts(req.workspaceId)
+        allAccounts = await mergeAllAdAccounts(fromDb, req.workspaceId)
+      }
       let lastSyncAt = null
       try {
         const latest = await dbSpend.getLatestSyncRun(req.workspaceId)
