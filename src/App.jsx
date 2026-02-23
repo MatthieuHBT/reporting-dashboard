@@ -455,7 +455,6 @@ function App() {
     try {
       if (dbMode) {
         setStoredToken(null)
-        setStoredWorkspaceId(null)
         setWorkspaceId(null)
         setMetaTokenConfigured(null)
         setFirstSyncDone(null)
@@ -802,7 +801,7 @@ function App() {
       if (activeTab === 'budget') loadBudgetsForPage()
       api.reports.spendToday().then((data) => setSpendTodayData(data)).catch(() => {})
       setLastUpdate(new Date())
-      checkOnboardingStatus(workspaceId || getStoredWorkspaceId())
+      checkOnboardingStatus(workspaceId)
       // Log info sync (incrémentale vs full) pour diagnostic
       if (result?.range) {
         const mode = result.incremental ? 'incremental' : (result.alreadyUpToDate ? 'up to date' : 'full')
@@ -947,17 +946,7 @@ function App() {
           setDbMode(!!db)
           if (user) {
             setCurrentUser(user)
-            const wsList = Array.isArray(user?.workspaces) ? user.workspaces : []
-            const storedWs = getStoredWorkspaceId()
-            const allowed = new Set(wsList.map((w) => String(w.id)))
-            if (wsList.length) {
-              if (!storedWs || !allowed.has(String(storedWs))) {
-                setStoredWorkspaceId(wsList[0].id)
-              }
-            } else {
-              if (storedWs) setStoredWorkspaceId(null)
-            }
-            const finalWs = getStoredWorkspaceId() || wsList?.[0]?.id || null
+            const finalWs = user.workspaceId || user?.workspaces?.[0]?.id || null
             setWorkspaceId(finalWs)
             setMetaTokenConfigured(null)
             setFirstSyncDone(null)
