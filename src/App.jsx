@@ -1056,7 +1056,6 @@ function App() {
                 </thead>
                 <tbody>
                   {[
-                    { key: 'totalSpend', label: 'Total spend', fmt: (v) => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
                     { key: 'totalSpendToday', label: 'Spend today', fmt: (v) => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
                     { key: 'campaignsCount', label: 'Campaigns', fmt: (v) => Number(v).toLocaleString() },
                     { key: 'winnersCount', label: 'Winners (ads)', fmt: (v) => Number(v).toLocaleString() },
@@ -1075,7 +1074,7 @@ function App() {
                         <td className="num delta-cell">
                           {delta !== null && delta !== 0 && (
                             <span className={delta > 0 ? 'delta-up' : 'delta-down'}>
-                              {delta > 0 ? '+' : ''}{key === 'totalSpend' || key === 'totalSpendToday' || key === 'totalEarn' ? `$${delta.toFixed(2)}` : delta.toLocaleString()}
+                              {delta > 0 ? '+' : ''}{key === 'totalSpendToday' || key === 'totalEarn' ? `$${delta.toFixed(2)}` : delta.toLocaleString()}
                             </span>
                           )}
                           {delta === 0 && <span className="delta-same">—</span>}
@@ -1087,7 +1086,7 @@ function App() {
               </table>
               </div>
               <p className="sync-report-note" role="note">
-                <strong>Total spend</strong> = sum over the whole selected period. <strong>Spend today</strong> = only today. Their deltas can differ when Meta revises other days (e.g. yesterday adjusted down, today up).
+                <strong>Spend today</strong> = spend for the current day only.
               </p>
               <p className="sync-report-note" role="note">
                 <strong>Revenue</strong> = total purchase value attributed to ads by Meta (can be higher than spend).
