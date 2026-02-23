@@ -65,7 +65,6 @@ export const api = {
       login: (email, password) => request('/auth/db/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
       signup: (email, password, name) => request('/auth/db/signup', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
       me: () => request('/auth/db/me'),
-      switchWorkspace: (workspaceId) => request('/auth/switch-workspace', { method: 'POST', body: JSON.stringify({ workspaceId }) }),
     },
   },
   refresh: (accessToken, opts = {}) => {
@@ -94,10 +93,17 @@ export const api = {
       test: () => request('/settings/meta-token/test', { method: 'POST' }),
     },
   },
+  client: {
+    resetAndSync: (opts = {}) => request('/client/reset-and-sync', { method: 'POST', body: JSON.stringify(opts || {}), timeout: SYNC_TIMEOUT }),
+    members: {
+      list: () => request('/workspace/members'),
+      add: (email, role) => request('/workspace/members', { method: 'POST', body: JSON.stringify({ email: String(email || '').trim(), role: role || 'member' }) }),
+      remove: (userId) => request(`/workspace/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+    },
+  },
+  // Backward-compat (anciennes versions front) — à terme supprimable
   workspaces: {
-    list: () => request('/workspaces'),
-    create: (name) => request('/workspaces', { method: 'POST', body: JSON.stringify({ name: String(name || '').trim() }) }),
-    resetAndSync: (opts = {}) => request('/workspace/reset-and-sync', { method: 'POST', body: JSON.stringify(opts || {}), timeout: SYNC_TIMEOUT }),
+    resetAndSync: (opts = {}) => request('/client/reset-and-sync', { method: 'POST', body: JSON.stringify(opts || {}), timeout: SYNC_TIMEOUT }),
     members: {
       list: () => request('/workspace/members'),
       add: (email, role) => request('/workspace/members', { method: 'POST', body: JSON.stringify({ email: String(email || '').trim(), role: role || 'member' }) }),

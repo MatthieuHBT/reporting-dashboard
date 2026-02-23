@@ -402,59 +402,12 @@ app.get('/api/auth/db/me', requireDbUser, async (req, res) => {
   }
 })
 
-// Switch "client" (workspace) — retourne un nouveau JWT scoppé
-app.post('/api/auth/switch-workspace', requireDbUser, asyncHandler(async (req, res) => {
-  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
-  const target = String(req.body?.workspaceId || '').trim()
-  if (!target) return res.status(400).json({ error: 'workspaceId required' })
-  try {
-    const { findUserByEmail } = await import('./db/auth.js')
-    const { getWorkspaceRole } = await import('./db/workspaces.js')
-    const user = await findUserByEmail(req.user.email)
-    if (!user) return res.status(401).json({ error: 'User not found' })
-    const role = await getWorkspaceRole(target, user.id)
-    if (!role) return res.status(403).json({ error: 'Not a member of this client' })
-    const token = jwt.sign(
-      { id: user.id, email: user.email, workspaceId: target },
-      JWT_SECRET,
-      { expiresIn: '7d' }
-    )
-    res.json({ token, workspaceId: target })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-}))
+// Workspace feature masked: switch disabled
+app.post('/api/auth/switch-workspace', (_req, res) => res.status(404).json({ error: 'Not found' }))
 
-// Workspaces (SaaS)
-app.get('/api/workspaces', requireDbUser, async (req, res) => {
-  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
-  try {
-    const { findUserByEmail } = await import('./db/auth.js')
-    const { listWorkspacesForUser } = await import('./db/workspaces.js')
-    const user = await findUserByEmail(req.user.email)
-    if (!user) return res.status(401).json({ error: 'User not found' })
-    const workspaces = await listWorkspacesForUser(user.id)
-    res.json({ workspaces })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
-
-app.post('/api/workspaces', requireDbUser, async (req, res) => {
-  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
-  try {
-    const { findUserByEmail } = await import('./db/auth.js')
-    const { createWorkspace } = await import('./db/workspaces.js')
-    const user = await findUserByEmail(req.user.email)
-    if (!user) return res.status(401).json({ error: 'User not found' })
-    const name = String(req.body?.name || '').trim()
-    if (!name) return res.status(400).json({ error: 'Workspace name required' })
-    const ws = await createWorkspace({ name, ownerUserId: user.id })
-    res.status(201).json({ workspace: ws })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
+// Workspace feature masked: list/create disabled
+app.get('/api/workspaces', (_req, res) => res.status(404).json({ error: 'Not found' }))
+app.post('/api/workspaces', (_req, res) => res.status(404).json({ error: 'Not found' }))
 
 // Workspace members (current workspace from X-Workspace-Id)
 app.get('/api/workspace/members', requireDbUser, async (req, res) => {
@@ -733,8 +686,8 @@ app.post('/api/refresh', requireDbUser, async (req, res) => {
   }
 })
 
-// Reset (purge) données d'un workspace puis resync Meta (owner uniquement)
-app.post('/api/workspace/reset-and-sync', requireDbUser, requireWorkspaceOwner, asyncHandler(async (req, res) => {
+// Reset (purge) données du client courant puis resync Meta (owner uniquement)
+const resetAndSyncHandler = asyncHandler(async (req, res) => {
   if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
   if (!req.workspaceId) return res.status(400).json({ error: 'workspaceId required' })
 
@@ -769,7 +722,11 @@ app.post('/api/workspace/reset-and-sync', requireDbUser, requireWorkspaceOwner, 
   const result = await runFullSync(metaToken, req.workspaceId, false, skipAds, false, false, null, campaignDays, null, null)
 
   return res.json({ ok: true, workspaceId: req.workspaceId, campaignDays, includeWinners, ...result })
-}))
+})
+
+// Backward-compat path + preferred path (workspace hidden)
+app.post('/api/workspace/reset-and-sync', requireDbUser, requireWorkspaceOwner, resetAndSyncHandler)
+app.post('/api/client/reset-and-sync', requireDbUser, requireWorkspaceOwner, resetAndSyncHandler)
 
 function requireAuth(req, res, next) {
   if (!storedToken) {

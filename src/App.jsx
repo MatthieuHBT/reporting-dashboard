@@ -2163,7 +2163,6 @@ function App() {
             <Settings
               workspaceId={workspaceId}
               currentUser={currentUser}
-              onWorkspaceChange={handleWorkspaceChange}
               onMetaTokenChange={() => checkOnboardingStatus(workspaceId)}
               onFirstSyncDone={() => checkOnboardingStatus(workspaceId)}
               needsOnboarding={needsOnboarding}

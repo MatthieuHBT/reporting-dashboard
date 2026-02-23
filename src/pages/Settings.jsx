@@ -3,10 +3,7 @@ import { KeyRound, Save, AlertCircle, ExternalLink, UserPlus, Trash2, RefreshCw 
 import { api } from '../api/client'
 import './Settings.css'
 
-export default function Settings({ workspaceId, currentUser, onWorkspaceChange, onMetaTokenChange, needsOnboarding, needsFirstSync, onRunFirstSync, isRefreshing, onFirstSyncDone }) {
-  // Section Client visible uniquement si plusieurs clients
-  const workspacesEnabled = true
-
+export default function Settings({ workspaceId, currentUser, onMetaTokenChange, needsOnboarding, needsFirstSync, onRunFirstSync, isRefreshing, onFirstSyncDone }) {
   const [token, setToken] = useState('')
   const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -15,11 +12,6 @@ export default function Settings({ workspaceId, currentUser, onWorkspaceChange, 
   const [success, setSuccess] = useState(false)
   const [testResult, setTestResult] = useState(null)
 
-  const [workspaceError, setWorkspaceError] = useState('')
-  const [workspaceLoading, setWorkspaceLoading] = useState(false)
-  const [workspaces, setWorkspaces] = useState([])
-  const [newWorkspaceName, setNewWorkspaceName] = useState('')
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(workspaceId || '')
   const [members, setMembers] = useState([])
   const [membersLoading, setMembersLoading] = useState(false)
   const [membersError, setMembersError] = useState('')
@@ -37,30 +29,9 @@ export default function Settings({ workspaceId, currentUser, onWorkspaceChange, 
   }, [])
 
   useEffect(() => {
-    if (workspaceId != null) setSelectedWorkspaceId(workspaceId || '')
-  }, [workspaceId])
-
-  useEffect(() => {
-    setWorkspaceLoading(true)
-    setWorkspaceError('')
-    api.workspaces.list()
-      .then((r) => setWorkspaces(r.workspaces || []))
-      .catch((e) => setWorkspaceError(e.message))
-      .finally(() => setWorkspaceLoading(false))
-  }, [])
-
-  const currentWorkspaceRole = workspaces.find((w) => w.id === selectedWorkspaceId)?.role
-  const canManageMembers = currentWorkspaceRole === 'owner' || currentWorkspaceRole === 'admin'
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) {
-      setMembers([])
-      setMembersError('')
-      return
-    }
     setMembersLoading(true)
     setMembersError('')
-    api.workspaces.members.list()
+    api.client.members.list()
       .then((r) => setMembers(r.members || []))
       .catch((e) => {
         if (e?.message && (String(e.message).includes('404') || String(e.message).includes('Not Found'))) {
@@ -71,7 +42,10 @@ export default function Settings({ workspaceId, currentUser, onWorkspaceChange, 
         }
       })
       .finally(() => setMembersLoading(false))
-  }, [selectedWorkspaceId])
+  }, [workspaceId])
+
+  const myWorkspaceRole = members.find((m) => m.email && currentUser?.email && String(m.email).toLowerCase() === String(currentUser.email).toLowerCase())?.role
+  const canManageMembers = (currentUser?.role === 'admin') || myWorkspaceRole === 'owner' || myWorkspaceRole === 'admin'
 
   const handleTestToken = async () => {
     setError('')
@@ -115,11 +89,11 @@ export default function Settings({ workspaceId, currentUser, onWorkspaceChange, 
         {needsOnboarding && (
           <div className="settings-warning">
             <AlertCircle size={16} />
-            To continue, first configure your Meta API token for this workspace.
+            To continue, first configure your Meta API token for this client.
           </div>
         )}
         <p className="settings-desc">
-          Meta API token used by “Refresh from Meta”. Stored per workspace in the database.
+          Meta API token used by “Refresh from Meta”. Stored per client in the database.
         </p>
         <p className="settings-help">
           <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer">
@@ -227,13 +201,13 @@ export default function Settings({ workspaceId, currentUser, onWorkspaceChange, 
                 setFirstSyncError('')
                 try {
                   // Reset du workspace + resync propre (30j). Owner/admin uniquement côté API.
-                  await api.workspaces.resetAndSync({ campaignDays: 30, includeWinners: false })
+                  await api.client.resetAndSync({ campaignDays: 30, includeWinners: false })
                   onFirstSyncDone?.()
                 } catch (e) {
                   setFirstSyncError(e?.message || 'Reset+sync failed')
                 }
               }}
-              title="Purges workspace data then resync (owner only)"
+              title="Purges client data then resync (owner only)"
             >
               Reset + resync (30 days)
             </button>
@@ -247,197 +221,107 @@ export default function Settings({ workspaceId, currentUser, onWorkspaceChange, 
         </div>
       )}
 
-      {workspacesEnabled && (
-        <div className="settings-card settings-card-spaced">
-          <header className="settings-subheader">
-            <h3>Client</h3>
-          </header>
-          <p className="settings-desc">
-            Your session is scoped to a client. If you have access to multiple clients, you can switch here.
-          </p>
-
-          {workspaceLoading && <p className="settings-desc">Loading…</p>}
-          {workspaceError && (
-            <div className="settings-error">
-              <AlertCircle size={16} />
-              {workspaceError}
-            </div>
-          )}
-
-          <div className="settings-form">
-            {workspaces.length > 1 && (
-              <>
-                <label htmlFor="workspace-select">Client</label>
-                <select
-                  id="workspace-select"
-                  value={selectedWorkspaceId}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setSelectedWorkspaceId(v)
-                    if (onWorkspaceChange) onWorkspaceChange(v || null)
-                  }}
-                  disabled={workspaceLoading}
-                >
-                  {workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name} {w.role ? `(${w.role})` : ''}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-
-            {(currentUser?.role === 'admin') && (
-              <>
-                <div className="settings-divider" />
-                <label htmlFor="workspace-create">Create a client</label>
-                <div className="settings-row">
-                  <input
-                    id="workspace-create"
-                    value={newWorkspaceName}
-                    onChange={(e) => setNewWorkspaceName(e.target.value)}
-                    placeholder="Client name"
-                    disabled={workspaceLoading}
-                  />
+      <div className="settings-card settings-card-spaced">
+        <header className="settings-subheader">
+          <h3><UserPlus size={18} /> Members</h3>
+        </header>
+        <p className="settings-desc">
+          People with access to this client. Only existing users can be added (they must sign up first).
+        </p>
+        {membersLoading && <p className="settings-desc">Loading…</p>}
+        {membersError && (
+          <div className="settings-error">
+            <AlertCircle size={16} />
+            {membersError}
+          </div>
+        )}
+        {!membersLoading && !membersError && (
+          <ul className="settings-members-list">
+            {members.map((m) => (
+              <li key={m.id} className="settings-members-row">
+                <span className="settings-members-info">
+                  {m.name || m.email} {m.name && <span className="settings-members-email">({m.email})</span>}
+                  <span className="settings-members-role">{m.role}</span>
+                </span>
+                {canManageMembers && (
                   <button
                     type="button"
-                    className="save-btn"
-                    disabled={workspaceLoading || !newWorkspaceName.trim()}
+                    className="save-btn outline settings-members-remove"
+                    disabled={removingId === m.id || (m.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1)}
+                    title={m.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1 ? 'Cannot remove the last owner' : 'Remove member'}
                     onClick={async () => {
-                      setWorkspaceLoading(true)
-                      setWorkspaceError('')
-                      try {
-                        const created = await api.workspaces.create(newWorkspaceName.trim())
-                        const ws = created.workspace
-                        const next = workspaces.some((w) => w.id === ws?.id)
-                          ? workspaces.map((w) => (w.id === ws?.id ? { ...w, name: ws.name } : w))
-                          : [...workspaces, ws].filter(Boolean)
-                        setWorkspaces(next)
-                        setNewWorkspaceName('')
-                        if (ws?.id) {
-                          setSelectedWorkspaceId(ws.id)
-                          if (onWorkspaceChange) onWorkspaceChange(ws.id)
-                        }
-                      } catch (e) {
-                        setWorkspaceError(e.message)
-                      } finally {
-                        setWorkspaceLoading(false)
-                      }
-                    }}
-                  >
-                    Create
-                  </button>
-                </div>
-              </>
-            )}
-
-            {selectedWorkspaceId && (
-              <>
-                <div className="settings-divider" />
-                <header className="settings-subheader">
-                  <h3><UserPlus size={18} /> Members</h3>
-                </header>
-                <p className="settings-desc">
-                  People with access to this client. Only existing users can be added (they must sign up first).
-                </p>
-                {membersLoading && <p className="settings-desc">Loading…</p>}
-                {membersError && (
-                  <div className="settings-error">
-                    <AlertCircle size={16} />
-                    {membersError}
-                  </div>
-                )}
-                {!membersLoading && !membersError && (
-                  <ul className="settings-members-list">
-                    {members.map((m) => (
-                      <li key={m.id} className="settings-members-row">
-                        <span className="settings-members-info">
-                          {m.name || m.email} {m.name && <span className="settings-members-email">({m.email})</span>}
-                          <span className="settings-members-role">{m.role}</span>
-                        </span>
-                        {canManageMembers && (
-                          <button
-                            type="button"
-                            className="save-btn outline settings-members-remove"
-                            disabled={removingId === m.id || (m.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1)}
-                            title={m.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1 ? 'Cannot remove the last owner' : 'Remove from workspace'}
-                            onClick={async () => {
-                              setRemovingId(m.id)
-                              setInviteError('')
-                              try {
-                                await api.workspaces.members.remove(m.id)
-                                setMembers((prev) => prev.filter((x) => x.id !== m.id))
-                              } catch (e) {
-                                setInviteError(e.message)
-                              } finally {
-                                setRemovingId(null)
-                              }
-                            }}
-                          >
-                            {removingId === m.id ? <span className="spinner" /> : <Trash2 size={14} />}
-                          </button>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {canManageMembers && (
-                  <form
-                    className="settings-form settings-invite-form"
-                    onSubmit={async (e) => {
-                      e.preventDefault()
-                      if (!inviteEmail.trim()) return
-                      setInviteSubmitting(true)
+                      setRemovingId(m.id)
                       setInviteError('')
                       try {
-                        const r = await api.workspaces.members.add(inviteEmail.trim(), inviteRole)
-                        setMembers((prev) => [...prev, { id: r.user.id, email: r.user.email, name: r.user.name, role: r.user.role }])
-                        setInviteEmail('')
-                      } catch (err) {
-                        setInviteError(err.message)
+                        await api.client.members.remove(m.id)
+                        setMembers((prev) => prev.filter((x) => x.id !== m.id))
+                      } catch (e) {
+                        setInviteError(e.message)
                       } finally {
-                        setInviteSubmitting(false)
+                        setRemovingId(null)
                       }
                     }}
                   >
-                    <label htmlFor="invite-email">Add member by email</label>
-                    <div className="settings-row">
-                      <input
-                        id="invite-email"
-                        type="email"
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
-                        placeholder="colleague@example.com"
-                        disabled={inviteSubmitting}
-                      />
-                      <select
-                        value={inviteRole}
-                        onChange={(e) => setInviteRole(e.target.value)}
-                        disabled={inviteSubmitting}
-                        className="settings-role-select"
-                      >
-                        <option value="member">Member</option>
-                        <option value="admin">Admin</option>
-                        <option value="owner">Owner</option>
-                      </select>
-                      <button type="submit" className="save-btn" disabled={inviteSubmitting || !inviteEmail.trim()}>
-                        {inviteSubmitting ? <span className="spinner" /> : <UserPlus size={16} />}
-                        Add
-                      </button>
-                    </div>
-                    {inviteError && (
-                      <div className="settings-error">
-                        <AlertCircle size={16} />
-                        {inviteError}
-                      </div>
-                    )}
-                  </form>
+                    {removingId === m.id ? <span className="spinner" /> : <Trash2 size={14} />}
+                  </button>
                 )}
-              </>
+              </li>
+            ))}
+          </ul>
+        )}
+        {canManageMembers && (
+          <form
+            className="settings-form settings-invite-form"
+            onSubmit={async (e) => {
+              e.preventDefault()
+              if (!inviteEmail.trim()) return
+              setInviteSubmitting(true)
+              setInviteError('')
+              try {
+                const r = await api.client.members.add(inviteEmail.trim(), inviteRole)
+                setMembers((prev) => [...prev, { id: r.user.id, email: r.user.email, name: r.user.name, role: r.user.role }])
+                setInviteEmail('')
+              } catch (err) {
+                setInviteError(err.message)
+              } finally {
+                setInviteSubmitting(false)
+              }
+            }}
+          >
+            <label htmlFor="invite-email">Add member by email</label>
+            <div className="settings-row">
+              <input
+                id="invite-email"
+                type="email"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                placeholder="colleague@example.com"
+                disabled={inviteSubmitting}
+              />
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value)}
+                disabled={inviteSubmitting}
+                className="settings-role-select"
+              >
+                <option value="member">Member</option>
+                <option value="admin">Admin</option>
+                <option value="owner">Owner</option>
+              </select>
+              <button type="submit" className="save-btn" disabled={inviteSubmitting || !inviteEmail.trim()}>
+                {inviteSubmitting ? <span className="spinner" /> : <UserPlus size={16} />}
+                Add
+              </button>
+            </div>
+            {inviteError && (
+              <div className="settings-error">
+                <AlertCircle size={16} />
+                {inviteError}
+              </div>
             )}
-          </div>
-        </div>
-      )}
+          </form>
+        )}
+      </div>
     </div>
   )
 }
