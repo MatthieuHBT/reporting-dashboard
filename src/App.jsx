@@ -152,7 +152,8 @@ function App() {
   const hasSetInitialTab = useRef(false)
 
   const needsOnboarding = !!(dbMode && workspaceId && metaTokenConfigured === false)
-  const needsFirstSync = !!(dbMode && workspaceId && metaTokenConfigured === true && firstSyncDone === false)
+  const hasSpendData = !!(spendData?.campaigns?.length > 0)
+  const needsFirstSync = !!(dbMode && workspaceId && metaTokenConfigured === true && firstSyncDone === false && !hasSpendData)
 
   const toggleMultiValue = useCallback((setFn, value) => {
     setFn((prev) => {
