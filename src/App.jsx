@@ -1159,22 +1159,7 @@ function App() {
             </div>
           ))}
         </nav>
-        {dbMode && currentUser?.workspaces?.length > 0 && (
-          <div className="sidebar-workspace">
-            <label htmlFor="sidebar-workspace-select" className="sidebar-workspace-label">Workspace</label>
-            <select
-              id="sidebar-workspace-select"
-              className="sidebar-workspace-select"
-              value={workspaceId || ''}
-              onChange={(e) => handleWorkspaceChange(e.target.value || null)}
-              title="Changer de workspace"
-            >
-              {currentUser.workspaces.map((w) => (
-                <option key={w.id} value={w.id}>{w.name}</option>
-              ))}
-            </select>
-          </div>
-        )}
+        {/* Workspace/Client switch masked */}
         <div className="sidebar-actions">
           <button
             className="theme-btn"
