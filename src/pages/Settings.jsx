@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { KeyRound, Save, AlertCircle, ExternalLink, UserPlus, Trash2, RefreshCw } from 'lucide-react'
+import { KeyRound, Save, AlertCircle, ExternalLink, RefreshCw } from 'lucide-react'
 import { api } from '../api/client'
 import './Settings.css'
 
@@ -12,14 +12,6 @@ export default function Settings({ workspaceId, currentUser, onMetaTokenChange, 
   const [success, setSuccess] = useState(false)
   const [testResult, setTestResult] = useState(null)
 
-  const [members, setMembers] = useState([])
-  const [membersLoading, setMembersLoading] = useState(false)
-  const [membersError, setMembersError] = useState('')
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState('member')
-  const [inviteSubmitting, setInviteSubmitting] = useState(false)
-  const [inviteError, setInviteError] = useState('')
-  const [removingId, setRemovingId] = useState(null)
   const [firstSyncError, setFirstSyncError] = useState('')
 
   useEffect(() => {
@@ -27,25 +19,6 @@ export default function Settings({ workspaceId, currentUser, onMetaTokenChange, 
       .then((r) => setConfigured(r.configured))
       .catch(() => setConfigured(false))
   }, [])
-
-  useEffect(() => {
-    setMembersLoading(true)
-    setMembersError('')
-    api.client.members.list()
-      .then((r) => setMembers(r.members || []))
-      .catch((e) => {
-        if (e?.message && (String(e.message).includes('404') || String(e.message).includes('Not Found'))) {
-          setMembers([])
-          setMembersError('')
-        } else {
-          setMembersError(e?.message || 'Failed to load members')
-        }
-      })
-      .finally(() => setMembersLoading(false))
-  }, [workspaceId])
-
-  const myWorkspaceRole = members.find((m) => m.email && currentUser?.email && String(m.email).toLowerCase() === String(currentUser.email).toLowerCase())?.role
-  const canManageMembers = (currentUser?.role === 'admin') || myWorkspaceRole === 'owner' || myWorkspaceRole === 'admin'
 
   const handleTestToken = async () => {
     setError('')
@@ -220,108 +193,6 @@ export default function Settings({ workspaceId, currentUser, onMetaTokenChange, 
           )}
         </div>
       )}
-
-      <div className="settings-card settings-card-spaced">
-        <header className="settings-subheader">
-          <h3><UserPlus size={18} /> Members</h3>
-        </header>
-        <p className="settings-desc">
-          People with access to this client. Only existing users can be added (they must sign up first).
-        </p>
-        {membersLoading && <p className="settings-desc">Loading…</p>}
-        {membersError && (
-          <div className="settings-error">
-            <AlertCircle size={16} />
-            {membersError}
-          </div>
-        )}
-        {!membersLoading && !membersError && (
-          <ul className="settings-members-list">
-            {members.map((m) => (
-              <li key={m.id} className="settings-members-row">
-                <span className="settings-members-info">
-                  {m.name || m.email} {m.name && <span className="settings-members-email">({m.email})</span>}
-                  <span className="settings-members-role">{m.role}</span>
-                </span>
-                {canManageMembers && (
-                  <button
-                    type="button"
-                    className="save-btn outline settings-members-remove"
-                    disabled={removingId === m.id || (m.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1)}
-                    title={m.role === 'owner' && members.filter((x) => x.role === 'owner').length === 1 ? 'Cannot remove the last owner' : 'Remove member'}
-                    onClick={async () => {
-                      setRemovingId(m.id)
-                      setInviteError('')
-                      try {
-                        await api.client.members.remove(m.id)
-                        setMembers((prev) => prev.filter((x) => x.id !== m.id))
-                      } catch (e) {
-                        setInviteError(e.message)
-                      } finally {
-                        setRemovingId(null)
-                      }
-                    }}
-                  >
-                    {removingId === m.id ? <span className="spinner" /> : <Trash2 size={14} />}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-        {canManageMembers && (
-          <form
-            className="settings-form settings-invite-form"
-            onSubmit={async (e) => {
-              e.preventDefault()
-              if (!inviteEmail.trim()) return
-              setInviteSubmitting(true)
-              setInviteError('')
-              try {
-                const r = await api.client.members.add(inviteEmail.trim(), inviteRole)
-                setMembers((prev) => [...prev, { id: r.user.id, email: r.user.email, name: r.user.name, role: r.user.role }])
-                setInviteEmail('')
-              } catch (err) {
-                setInviteError(err.message)
-              } finally {
-                setInviteSubmitting(false)
-              }
-            }}
-          >
-            <label htmlFor="invite-email">Add member by email</label>
-            <div className="settings-row">
-              <input
-                id="invite-email"
-                type="email"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="colleague@example.com"
-                disabled={inviteSubmitting}
-              />
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value)}
-                disabled={inviteSubmitting}
-                className="settings-role-select"
-              >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-                <option value="owner">Owner</option>
-              </select>
-              <button type="submit" className="save-btn" disabled={inviteSubmitting || !inviteEmail.trim()}>
-                {inviteSubmitting ? <span className="spinner" /> : <UserPlus size={16} />}
-                Add
-              </button>
-            </div>
-            {inviteError && (
-              <div className="settings-error">
-                <AlertCircle size={16} />
-                {inviteError}
-              </div>
-            )}
-          </form>
-        )}
-      </div>
     </div>
   )
 }
