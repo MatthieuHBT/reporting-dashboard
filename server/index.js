@@ -6,7 +6,7 @@ import { readFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { fetchMetaData, fetchMetaDataAllPages } from './services/metaApi.js'
-import { parseCampaignName } from './utils/campaignNaming.js'
+import { parseCampaignName, normalizeProductKey } from './utils/campaignNaming.js'
 import { extractMarketFromAccount } from './utils/accountNaming.js'
 import { hasDb } from './db/index.js'
 
@@ -884,7 +884,7 @@ app.get('/api/reports/spend', requireDbUser, asyncHandler(async (req, res) => {
         byAccount[accKey].accountName = r.accountName
         byAccount[accKey].accountId = r.accountId
         byAccount[accKey].budget = budgetByAccount[accKey] || 0
-        const prodKey = r.productWithAnimal || (r.animal ? `${(r.productName || 'Other').trim()} ${r.animal}`.trim() : (r.productName || 'Other'))
+        const prodKey = normalizeProductKey(r.productWithAnimal || (r.animal ? `${(r.productName || 'Other').trim()} ${r.animal}`.trim() : (r.productName || 'Other')))
         byProduct[prodKey] = (byProduct[prodKey] || { spend: 0, impressions: 0 })
         byProduct[prodKey].spend += r.spend || 0
         byProduct[prodKey].impressions += r.impressions || 0
@@ -960,7 +960,7 @@ app.get('/api/reports/spend', requireDbUser, asyncHandler(async (req, res) => {
         byAccount[accKey].impressions += r.impressions || 0
         byAccount[accKey].accountName = r.accountName
         byAccount[accKey].accountId = r.accountId
-        const prodKey = r.productWithAnimal || (r.animal ? `${(r.productName || 'Other').trim()} ${r.animal}`.trim() : (r.productName || 'Other'))
+        const prodKey = normalizeProductKey(r.productWithAnimal || (r.animal ? `${(r.productName || 'Other').trim()} ${r.animal}`.trim() : (r.productName || 'Other')))
         byProduct[prodKey] = (byProduct[prodKey] || { spend: 0, impressions: 0 })
         byProduct[prodKey].spend += r.spend || 0
         byProduct[prodKey].impressions += r.impressions || 0
@@ -1058,7 +1058,7 @@ async function fetchSpendFromApi(req, res) {
       byAccount[accKey].impressions += r.impressions
       byAccount[accKey].accountName = r.accountName
       byAccount[accKey].accountId = r.accountId
-      const prodKey = r.productName || 'Other'
+      const prodKey = normalizeProductKey(r.productName || 'Other')
       byProduct[prodKey] = (byProduct[prodKey] || { spend: 0, impressions: 0 })
       byProduct[prodKey].spend += r.spend
       byProduct[prodKey].impressions += r.impressions

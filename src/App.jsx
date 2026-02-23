@@ -13,7 +13,6 @@ import {
   LogOut,
   X,
   Menu,
-  Settings as SettingsIcon,
   KeyRound,
   ChevronUp,
   ChevronDown,
@@ -37,7 +36,6 @@ import { format, subDays, startOfDay, differenceInDays } from 'date-fns'
 import { api, getStoredToken, setStoredToken } from './api/client'
 import { parseAdName } from './utils/parseAdNaming'
 import Login from './pages/Login'
-import Admin from './pages/Admin'
 import Settings from './pages/Settings'
 import OnboardingModal from './components/OnboardingModal'
 import { PAGE_IDS, PAGE_LABELS } from './data/members'
@@ -64,8 +62,9 @@ function getCampaignMarket(c) {
 
 function normalizeProductName(name) {
   if (!name) return name
-  // "PDP" est un type de page (landing), pas un produit → on le retire du produit
+  // Fusion variantes : "X LP" / "X PDP" → "X" pour éviter doublons (ex. SILVERVINE DENTAL STICKS CAT vs CAT LP)
   return String(name)
+    .replace(/\s+LP\s*$/i, '')
     .replace(/\s+PDP(\s+PDP)*\s*$/i, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
@@ -101,7 +100,6 @@ const SIDEBAR_SECTIONS = [
   {
     title: 'Administration',
     items: [
-      { id: 'admin', label: 'Members', icon: SettingsIcon },
       { id: 'settings', label: 'Settings', icon: KeyRound },
     ],
   },
@@ -316,7 +314,6 @@ function App() {
     return SIDEBAR_SECTIONS.map((section) => ({
       ...section,
       items: section.items.filter((item) => {
-        if (item.id === 'admin') return isAdmin
         if (item.id === 'settings') return canSeeSettings
         if (item.id === 'general') return canAccess('general')
         return canAccess(item.id)
@@ -337,6 +334,11 @@ function App() {
       setActiveTab(firstAccessiblePage)
     }
   }, [currentUser, activeTab, firstAccessiblePage])
+
+  // "Members" page is masked; redirect if an old state navigates to it.
+  useEffect(() => {
+    if (activeTab === 'admin') setActiveTab('settings')
+  }, [activeTab])
 
   useEffect(() => {
     if (connected && dbMode && canAccess('general') && !hasSetInitialTab.current) {
@@ -784,7 +786,14 @@ function App() {
   const { daysInRange } = spendBudgetMeta || {}
 
   const handleRefreshFromMeta = async (opts = {}) => {
-    if (!dbMode || !getStoredToken()) return
+    if (!dbMode) {
+      setApiError('Refresh from Meta is only available in DB mode.')
+      return
+    }
+    if (!getStoredToken()) {
+      setApiError('Session expired. Please login again.')
+      return
+    }
     setIsRefreshing(true)
     setApiError(null)
     try {
@@ -800,7 +809,6 @@ function App() {
       if (activeTab === 'winners') fetchWinners()
       if (activeTab === 'budget') loadBudgetsForPage()
       api.reports.spendToday().then((data) => setSpendTodayData(data)).catch(() => {})
-      setLastUpdate(new Date())
       checkOnboardingStatus(workspaceId)
       // Log info sync (incrémentale vs full) pour diagnostic
       if (result?.range) {
@@ -1130,8 +1138,8 @@ function App() {
                   key={id}
                   className={`nav-btn ${activeTab === id ? 'active' : ''}`}
                   onClick={() => {
-                    // Settings/Admin are gated elsewhere (owner/admin), not by page permissions.
-                    const isUngatedPage = id === 'settings' || id === 'admin'
+                    // Settings is gated elsewhere (owner/admin), not by page permissions.
+                    const isUngatedPage = id === 'settings'
                     if (needsOnboarding && id !== 'settings') {
                       setApiError('Please configure your Meta token in Settings to continue.')
                       setActiveTab('settings')
@@ -1186,7 +1194,18 @@ function App() {
         )}
         <div className="sidebar-footer">
           <span className="last-update">Last update: {lastUpdate instanceof Date && !isNaN(lastUpdate.getTime()) ? format(lastUpdate, 'dd/MM HH:mm') : '—'}</span>
-          <span className="refresh-badge">~30 min</span>
+          <span className="refresh-badge">
+            {(() => {
+              if (!(lastUpdate instanceof Date) || isNaN(lastUpdate.getTime())) return ''
+              const mins = Math.max(0, Math.round((Date.now() - lastUpdate.getTime()) / 60000))
+              if (mins < 1) return '~now'
+              if (mins < 60) return `~${mins} min`
+              const hrs = Math.round(mins / 60)
+              if (hrs < 24) return `~${hrs} h`
+              const days = Math.round(hrs / 24)
+              return `~${days} d`
+            })()}
+          </span>
         </div>
       </aside>
 
@@ -1204,7 +1223,6 @@ function App() {
               {activeTab === 'winners' && 'Winners — Ads by spend & ROAS'}
               {activeTab === 'stock' && 'Stock'}
               {activeTab === 'general' && 'General — Overview'}
-              {activeTab === 'admin' && 'Administration — Members'}
               {activeTab === 'settings' && 'Settings — Meta token'}
             </h1>
             <div className="header-date">{format(new Date(), 'EEEE, MMMM d, yyyy')}</div>
@@ -2136,12 +2154,6 @@ function App() {
           </div>
           )
         })()}
-
-        {activeTab === 'admin' && (
-          <div className="content admin-content">
-            <Admin dbMode={dbMode} />
-          </div>
-        )}
 
         {activeTab === 'settings' && (
           <div className="content settings-content">

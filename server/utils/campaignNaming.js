@@ -32,6 +32,14 @@ export function normalizeProductName(name) {
   return PRODUCT_ALIASES[key] || PRODUCT_ALIASES[bySpaces] || (name.trim() || 'Other')
 }
 
+/** Clé produit pour agrégation : normalise + fusionne variantes (ex. "X LP" / "X PDP" → "X"). */
+export function normalizeProductKey(label) {
+  if (!label || typeof label !== 'string') return 'Other'
+  let s = normalizeProductName(label.trim())
+  s = s.replace(/\s+LP\s*$/i, '').replace(/\s+PDP(\s+PDP)*\s*$/i, '').replace(/\s{2,}/g, ' ').trim()
+  return s || 'Other'
+}
+
 /**
  * Parse campaign naming: CBO_[CODE_COUNTRY]_[PRODUCT NAME]_[ANIMAL]_[TYPE]_[DATE]
  * Example: CBO_ES_SMART_BALL_CAT_BASIC_MASHUP_VIDEO_20250216
