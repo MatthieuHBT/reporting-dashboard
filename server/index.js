@@ -837,18 +837,20 @@ app.get('/api/reports/spend', requireDbUser, asyncHandler(async (req, res) => {
       })
     }
     try {
-      const dbSpend = await import('./db/spend.js')
-      let filteredCampaigns = await dbSpend.getCampaigns(range?.since, range?.until, accountName, req.workspaceId)
-
-      // Sécurité: ne compter que les ad accounts accessibles par le token Meta du workspace.
-      // Utile si la BDD contient de l'historique "mélangé" (ex. anciennes lignes backfillées dans un workspace legacy).
       const metaAccounts = await getWorkspaceMetaAccounts(req.workspaceId)
+      const allowedIds = Array.isArray(metaAccounts) ? metaAccounts.map((a) => a.id).filter(Boolean) : []
+      const allowedNames = Array.isArray(metaAccounts) ? metaAccounts.map((a) => a.name).filter(Boolean) : []
+      const dbSpend = await import('./db/spend.js')
+      let filteredCampaigns = await dbSpend.getCampaigns(range?.since, range?.until, accountName, req.workspaceId, {
+        allowedAccountIds: allowedIds,
+        allowedAccountNames: allowedNames,
+      })
       if (Array.isArray(metaAccounts) && metaAccounts.length) {
-        const allowedIds = new Set(metaAccounts.map((a) => a.id).filter(Boolean))
-        const allowedNames = new Set(metaAccounts.map((a) => a.name).filter(Boolean))
+        const allowedIdSet = new Set(allowedIds.map(String))
+        const allowedNameSet = new Set(allowedNames.map(String))
         filteredCampaigns = filteredCampaigns.filter((c) => {
-          const idOk = c.accountId && allowedIds.has(String(c.accountId))
-          const nameOk = c.accountName && allowedNames.has(String(c.accountName))
+          const idOk = c.accountId && allowedIdSet.has(String(c.accountId))
+          const nameOk = c.accountName && allowedNameSet.has(String(c.accountName))
           return idOk || nameOk
         })
       }

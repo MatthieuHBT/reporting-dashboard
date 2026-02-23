@@ -18,6 +18,7 @@ import {
   ChevronDown,
   Sparkles,
   DollarSign,
+  ArrowRight,
 } from 'lucide-react'
 import {
   LineChart,
@@ -147,6 +148,7 @@ function App() {
   const [showBudgetsModal, setShowBudgetsModal] = useState(false)
   const [budgetsList, setBudgetsList] = useState([])
   const [budgetsLoading, setBudgetsLoading] = useState(false)
+  const [syncReport, setSyncReport] = useState(null) // { before, after, result } après une sync Meta
   const hasSetInitialTab = useRef(false)
 
   const needsOnboarding = !!(dbMode && workspaceId && metaTokenConfigured === false)
@@ -794,8 +796,20 @@ function App() {
       setApiError('Session expired. Please login again.')
       return
     }
+    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    const campaigns = spendData?.campaigns || []
+    const winners = winnersData?.winners || []
+    const beforeTotalSpendToday = totalSpendToday != null ? totalSpendToday : (spendTodayData?.totalSpendToday ?? campaigns.filter((c) => String(c.date || '').slice(0, 10) === todayStr).reduce((s, c) => s + (parseFloat(c.spend) || 0), 0))
+    const before = {
+      totalSpend: Math.round(campaigns.reduce((s, c) => s + (parseFloat(c.spend) || 0), 0) * 100) / 100,
+      totalSpendToday: Math.round((beforeTotalSpendToday || 0) * 100) / 100,
+      campaignsCount: campaigns.length,
+      winnersCount: winners.length,
+      totalEarn: Math.round(winners.reduce((s, w) => s + (parseFloat(w.purchaseValue) || 0), 0) * 100) / 100,
+    }
     setIsRefreshing(true)
     setApiError(null)
+    setSyncReport(null)
     try {
       const nextOpts = { ...opts }
       if (nextOpts.accounts == null && Array.isArray(filterAccount) && filterAccount.length) {
@@ -808,9 +822,24 @@ function App() {
       await fetchSpend()
       if (activeTab === 'winners') fetchWinners()
       if (activeTab === 'budget') loadBudgetsForPage()
+      const [afterSpend, afterWinners, afterSpendTodayResp] = await Promise.all([
+        api.reports.spend(DATE_RANGES.find((r) => r.id === dateRange)?.preset ? { datePreset: DATE_RANGES.find((r) => r.id === dateRange).preset } : { since: dateFrom, until: dateTo }),
+        api.reports.winners(DATE_RANGES.find((r) => r.id === dateRange)?.preset ? { datePreset: DATE_RANGES.find((r) => r.id === dateRange).preset } : { since: dateFrom, until: dateTo }),
+        api.reports.spendToday().catch(() => ({ campaigns: [], totalSpendToday: 0, byAccount: {} })),
+      ])
+      const afterCampaigns = afterSpend?.campaigns || []
+      const afterWinnersList = afterWinners?.winners || []
+      const afterSpendTodayVal = afterSpendTodayResp?.totalSpendToday ?? afterCampaigns.filter((c) => String(c.date || '').slice(0, 10) === todayStr).reduce((s, c) => s + (parseFloat(c.spend) || 0), 0)
+      const after = {
+        totalSpend: Math.round(afterCampaigns.reduce((s, c) => s + (parseFloat(c.spend) || 0), 0) * 100) / 100,
+        totalSpendToday: Math.round((afterSpendTodayVal || 0) * 100) / 100,
+        campaignsCount: afterCampaigns.length,
+        winnersCount: afterWinnersList.length,
+        totalEarn: Math.round(afterWinnersList.reduce((s, w) => s + (parseFloat(w.purchaseValue) || 0), 0) * 100) / 100,
+      }
+      setSyncReport({ before, after, result: result || {} })
       api.reports.spendToday().then((data) => setSpendTodayData(data)).catch(() => {})
       checkOnboardingStatus(workspaceId)
-      // Log info sync (incrémentale vs full) pour diagnostic
       if (result?.range) {
         const mode = result.incremental ? 'incremental' : (result.alreadyUpToDate ? 'up to date' : 'full')
         console.log(`Sync OK (${mode}): ${result.range?.since} → ${result.range?.until}, ${result.campaignsCount ?? 0} campaigns`)
@@ -938,6 +967,10 @@ function App() {
     return (
       <div className="app theme-dark">
         <div className="loading-page">
+          <div className="loading-brand">
+            <BarChart3 size={40} strokeWidth={1.5} />
+            <span className="loading-brand-text">Advertising Report</span>
+          </div>
           <div className="loading-spinner" />
           <span>Loading...</span>
         </div>
@@ -989,6 +1022,83 @@ function App() {
             <RefreshCw size={48} className="sync-spinner" />
             <h3>Sync in progress…</h3>
             <p>Please stay on this page. Loading data can take a few minutes.</p>
+          </div>
+        </div>
+      )}
+      {syncReport && (
+        <div className="modal-overlay sync-report-overlay" onClick={() => setSyncReport(null)}>
+          <div className="modal-content sync-report-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Sync report</h3>
+              <button type="button" className="close-btn" onClick={() => setSyncReport(null)} aria-label="Close">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body sync-report-body">
+              {syncReport.result?.range && (
+                <p className="sync-report-range">
+                  {syncReport.result.range.since} → {syncReport.result.range.until}
+                  {syncReport.result.incremental && ' (incremental)'}
+                  {syncReport.result.alreadyUpToDate && ' (already up to date)'}
+                </p>
+              )}
+              <div className="sync-report-table-wrap">
+              <table className="sync-report-table">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th className="num">Before</th>
+                    <th aria-hidden />
+                    <th className="num">After</th>
+                    <th className="num">Delta</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { key: 'totalSpend', label: 'Total spend', fmt: (v) => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                    { key: 'totalSpendToday', label: 'Spend today', fmt: (v) => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                    { key: 'campaignsCount', label: 'Campaigns', fmt: (v) => Number(v).toLocaleString() },
+                    { key: 'winnersCount', label: 'Winners (ads)', fmt: (v) => Number(v).toLocaleString() },
+                    { key: 'totalEarn', label: 'Revenue (purchase value)', fmt: (v) => `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+                  ].map(({ key, label, fmt }) => {
+                    const b = syncReport.before[key]
+                    const a = syncReport.after[key]
+                    const isNum = typeof b === 'number' && typeof a === 'number'
+                    const delta = isNum ? a - b : null
+                    return (
+                      <tr key={key}>
+                        <td>{label}</td>
+                        <td className="num">{fmt(b)}</td>
+                        <td className="arrow-cell"><ArrowRight size={18} className="sync-report-arrow" /></td>
+                        <td className="num">{fmt(a)}</td>
+                        <td className="num delta-cell">
+                          {delta !== null && delta !== 0 && (
+                            <span className={delta > 0 ? 'delta-up' : 'delta-down'}>
+                              {delta > 0 ? '+' : ''}{key === 'totalSpend' || key === 'totalSpendToday' || key === 'totalEarn' ? `$${delta.toFixed(2)}` : delta.toLocaleString()}
+                            </span>
+                          )}
+                          {delta === 0 && <span className="delta-same">—</span>}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              </div>
+              <p className="sync-report-note" role="note">
+                <strong>Total spend</strong> = sum over the whole selected period. <strong>Spend today</strong> = only today. Their deltas can differ when Meta revises other days (e.g. yesterday adjusted down, today up).
+              </p>
+              <p className="sync-report-note" role="note">
+                <strong>Revenue</strong> = total purchase value attributed to ads by Meta (can be higher than spend).
+              </p>
+              {(syncReport.result?.campaignsCount != null || syncReport.result?.adsCount != null) && (
+                <p className="sync-report-summary">
+                  Synced: {syncReport.result.campaignsCount ?? 0} campaigns
+                  {syncReport.result.budgetsCount != null && `, ${syncReport.result.budgetsCount} budgets`}
+                  {syncReport.result.adsCount != null && `, ${syncReport.result.adsCount} ads`}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1231,6 +1341,10 @@ function App() {
 
         {isLoading && (
           <div className="loading-overlay">
+            <div className="loading-brand">
+              <BarChart3 size={40} strokeWidth={1.5} />
+              <span className="loading-brand-text">Advertising Report</span>
+            </div>
             <div className="loading-spinner" />
             <span>Loading...</span>
           </div>

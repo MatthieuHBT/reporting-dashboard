@@ -65,15 +65,25 @@ export async function countCampaigns(since = null, until = null, workspaceId = n
   return rows?.[0]?.count ?? 0
 }
 
-export async function getCampaigns(since, until, accountName = null, workspaceId = null) {
+/** Clause WHERE workspace : workspace_id = wid OU legacy (workspace_id IS NULL) avec account dans listes autorisées */
+function workspaceWhere(wid, allowedAccountIds = [], allowedAccountNames = []) {
+  const ids = Array.isArray(allowedAccountIds) ? allowedAccountIds.filter(Boolean).map(String) : []
+  const names = Array.isArray(allowedAccountNames) ? allowedAccountNames.filter(Boolean).map(String) : []
+  const includeLegacy = ids.length > 0 || names.length > 0
+  if (!includeLegacy) return sql`workspace_id = ${wid}`
+  if (ids.length && names.length) return sql`(workspace_id = ${wid} OR (workspace_id IS NULL AND (account_id = ANY(${ids}) OR account_name = ANY(${names}))))`
+  if (ids.length) return sql`(workspace_id = ${wid} OR (workspace_id IS NULL AND account_id = ANY(${ids})))`
+  return sql`(workspace_id = ${wid} OR (workspace_id IS NULL AND account_name = ANY(${names})))`
+}
+
+export async function getCampaigns(since, until, accountName = null, workspaceId = null, opts = {}) {
   guard()
-  // Sécurité multi-tenant: sans workspace_id on ne renvoie jamais toutes les campagnes (évite mélange de données).
   const wid = typeof workspaceId === 'string' && workspaceId.trim() ? workspaceId.trim() : null
   if (!wid) return []
+  const allowedIds = opts.allowedAccountIds ?? []
+  const allowedNames = opts.allowedAccountNames ?? []
+  const wsWhere = workspaceWhere(wid, allowedIds, allowedNames)
 
-  // IMPORTANT:
-  // - Si accountName est un vrai nom de compte Meta (ex: "VELUNAPETS BG COD $"), on filtre EXACTEMENT sur account_name.
-  // - Le filtre "market" (regex sur campaign_name) n'est utilisé que si l'utilisateur passe un code court (ex: "BG", "IT").
   const raw = typeof accountName === 'string' ? accountName.trim() : ''
   const market = raw && /^[A-Za-z]{2,3}$/.test(raw) ? raw.toUpperCase() : null
   const namePattern = market ? `^(CBO|ABO)_${market}_` : null
@@ -85,7 +95,7 @@ export async function getCampaigns(since, until, accountName = null, workspaceId
       FROM (
         SELECT DISTINCT ON (account_id, campaign_id, date) *
         FROM campaigns
-        WHERE workspace_id = ${wid}
+        WHERE ${wsWhere}
           AND date >= ${since} AND date <= ${until}
           AND campaign_name ~* ${namePattern}
         ORDER BY account_id, campaign_id, date, created_at DESC
@@ -98,7 +108,7 @@ export async function getCampaigns(since, until, accountName = null, workspaceId
       FROM (
         SELECT DISTINCT ON (account_id, campaign_id, date) *
         FROM campaigns
-        WHERE workspace_id = ${wid}
+        WHERE ${wsWhere}
           AND campaign_name ~* ${namePattern}
         ORDER BY account_id, campaign_id, date, created_at DESC
       ) t
@@ -110,7 +120,7 @@ export async function getCampaigns(since, until, accountName = null, workspaceId
       FROM (
         SELECT DISTINCT ON (account_id, campaign_id, date) *
         FROM campaigns
-        WHERE workspace_id = ${wid}
+        WHERE ${wsWhere}
           AND date >= ${since} AND date <= ${until}
           AND account_name = ${accountName}
         ORDER BY account_id, campaign_id, date, created_at DESC
@@ -123,7 +133,7 @@ export async function getCampaigns(since, until, accountName = null, workspaceId
       FROM (
         SELECT DISTINCT ON (account_id, campaign_id, date) *
         FROM campaigns
-        WHERE workspace_id = ${wid}
+        WHERE ${wsWhere}
           AND account_name = ${accountName}
         ORDER BY account_id, campaign_id, date, created_at DESC
       ) t
@@ -135,7 +145,7 @@ export async function getCampaigns(since, until, accountName = null, workspaceId
       FROM (
         SELECT DISTINCT ON (account_id, campaign_id, date) *
         FROM campaigns
-        WHERE workspace_id = ${wid}
+        WHERE ${wsWhere}
           AND date >= ${since} AND date <= ${until}
         ORDER BY account_id, campaign_id, date, created_at DESC
       ) t
@@ -147,7 +157,7 @@ export async function getCampaigns(since, until, accountName = null, workspaceId
       FROM (
         SELECT DISTINCT ON (account_id, campaign_id, date) *
         FROM campaigns
-        WHERE workspace_id = ${wid}
+        WHERE ${wsWhere}
         ORDER BY account_id, campaign_id, date, created_at DESC
       ) t
       ORDER BY campaign_name, date DESC, spend DESC
