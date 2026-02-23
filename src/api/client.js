@@ -1,7 +1,6 @@
 const _api = import.meta.env.VITE_API_URL?.replace(/\/$/, '') || ''
 const API_BASE = _api ? (_api.endsWith('/api') ? _api : _api + '/api') : '/api'
 const AUTH_KEY = 'vp_auth_token'
-const WORKSPACE_KEY = 'vp_workspace_id'
 
 export function getApiBase() {
   return API_BASE
@@ -16,15 +15,6 @@ export function setStoredToken(token) {
   else localStorage.removeItem(AUTH_KEY)
 }
 
-export function getStoredWorkspaceId() {
-  return localStorage.getItem(WORKSPACE_KEY)
-}
-
-export function setStoredWorkspaceId(workspaceId) {
-  if (workspaceId) localStorage.setItem(WORKSPACE_KEY, String(workspaceId))
-  else localStorage.removeItem(WORKSPACE_KEY)
-}
-
 const FETCH_TIMEOUT = 30000 // 30s par défaut
 const SYNC_TIMEOUT = 300000 // 5 min pour la synchro Meta
 
@@ -33,8 +23,6 @@ async function request(path, options = {}) {
   const token = getStoredToken()
   const headers = { 'Content-Type': 'application/json', ...fetchOptions.headers }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const wsId = getStoredWorkspaceId()
-  if (wsId) headers['X-Workspace-Id'] = wsId
   const url = `${API_BASE}${path}`
   const timeoutMs = timeoutOpt ?? FETCH_TIMEOUT
   const controller = new AbortController()
@@ -77,6 +65,7 @@ export const api = {
       login: (email, password) => request('/auth/db/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
       signup: (email, password, name) => request('/auth/db/signup', { method: 'POST', body: JSON.stringify({ email, password, name }) }),
       me: () => request('/auth/db/me'),
+      switchWorkspace: (workspaceId) => request('/auth/switch-workspace', { method: 'POST', body: JSON.stringify({ workspaceId }) }),
     },
   },
   refresh: (accessToken, opts = {}) => {

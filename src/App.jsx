@@ -34,7 +34,7 @@ import {
 } from 'recharts'
 import { exportToCsv } from './utils/exportCsv'
 import { format, subDays, startOfDay, differenceInDays } from 'date-fns'
-import { api, getStoredToken, setStoredToken, getStoredWorkspaceId, setStoredWorkspaceId } from './api/client'
+import { api, getStoredToken, setStoredToken } from './api/client'
 import { parseAdName } from './utils/parseAdNaming'
 import Login from './pages/Login'
 import Admin from './pages/Admin'
@@ -119,7 +119,7 @@ function App() {
   const [connected, setConnected] = useState(false)
   const [demoMode, setDemoMode] = useState(false)
   const [dbMode, setDbMode] = useState(false)
-  const [workspaceId, setWorkspaceId] = useState(getStoredWorkspaceId() || null)
+  const [workspaceId, setWorkspaceId] = useState(null)
   const [metaTokenConfigured, setMetaTokenConfigured] = useState(null) // null = unknown
   const [firstSyncDone, setFirstSyncDone] = useState(null) // null = unknown
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -351,12 +351,6 @@ function App() {
       setFirstSyncDone(null)
       return
     }
-    const wsId = forceWorkspaceId || workspaceId || getStoredWorkspaceId()
-    if (!wsId) {
-      setMetaTokenConfigured(null)
-      setFirstSyncDone(null)
-      return
-    }
     try {
       const r = await api.settings.metaToken.get()
       setMetaTokenConfigured(!!r.configured)
@@ -376,25 +370,12 @@ function App() {
           setDbMode(true)
           if (data.user) {
             setCurrentUser(data.user)
-            const wsList = Array.isArray(data.user?.workspaces) ? data.user.workspaces : []
-            const storedWs = getStoredWorkspaceId()
-            const allowed = new Set(wsList.map((w) => String(w.id)))
-            if (wsList.length) {
-              if (!storedWs || !allowed.has(String(storedWs))) {
-                setStoredWorkspaceId(wsList[0].id)
-              }
-            } else {
-              // Sécurité: si l'utilisateur n'a aucun workspace, ne pas réutiliser un ancien workspace stocké
-              if (storedWs) setStoredWorkspaceId(null)
-            }
-            const finalWs = getStoredWorkspaceId() || wsList?.[0]?.id || null
-            setWorkspaceId(finalWs)
+            setWorkspaceId(data.user.workspaceId || null)
           }
           setDemoMode(false)
         })
         .catch(() => {
           setStoredToken(null)
-          setStoredWorkspaceId(null)
           setWorkspaceId(null)
           setConnected(false)
         })
@@ -848,16 +829,27 @@ function App() {
 
   const handleWorkspaceChange = (nextWorkspaceId) => {
     const ws = nextWorkspaceId || null
-    setStoredWorkspaceId(ws)
-    setWorkspaceId(ws)
-    setMetaTokenConfigured(null)
-    setFirstSyncDone(null)
+    if (!ws) return
+    setIsLoading(true)
     setApiError(null)
-    fetchSpend()
-    if (activeTab === 'winners') fetchWinners()
-    if (activeTab === 'budget') loadBudgetsForPage()
-    api.reports.spendToday().then((data) => setSpendTodayData(data)).catch(() => setSpendTodayData(null))
-    checkOnboardingStatus(ws)
+    api.auth.db.switchWorkspace(ws)
+      .then((r) => {
+        if (r?.token) setStoredToken(r.token)
+        setWorkspaceId(ws)
+        setCurrentUser((u) => (u ? { ...u, workspaceId: ws } : u))
+        setMetaTokenConfigured(null)
+        setFirstSyncDone(null)
+        setSpendData(null)
+        setWinnersData(null)
+        setSpendTodayData(null)
+        checkOnboardingStatus(ws)
+        // Refresh visible tab data
+        fetchSpend()
+        if (activeTab === 'winners') fetchWinners()
+        if (activeTab === 'budget') loadBudgetsForPage()
+      })
+      .catch((e) => setApiError(e?.message || 'Failed to switch client'))
+      .finally(() => setIsLoading(false))
   }
 
   const handleExportSpend = () => {
@@ -2181,6 +2173,7 @@ function App() {
           <div className="content settings-content">
             <Settings
               workspaceId={workspaceId}
+              currentUser={currentUser}
               onWorkspaceChange={handleWorkspaceChange}
               onMetaTokenChange={() => checkOnboardingStatus(workspaceId)}
               onFirstSyncDone={() => checkOnboardingStatus(workspaceId)}

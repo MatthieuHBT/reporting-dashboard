@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { KeyRound, Save, AlertCircle, ExternalLink, UserPlus, Trash2, RefreshCw } from 'lucide-react'
-import { api, getStoredWorkspaceId, setStoredWorkspaceId } from '../api/client'
+import { api } from '../api/client'
 import './Settings.css'
 
-export default function Settings({ workspaceId, onWorkspaceChange, onMetaTokenChange, needsOnboarding, needsFirstSync, onRunFirstSync, isRefreshing, onFirstSyncDone }) {
-  // Section Workspaces visible dès qu'on est en mode DB (page Settings = connecté)
+export default function Settings({ workspaceId, currentUser, onWorkspaceChange, onMetaTokenChange, needsOnboarding, needsFirstSync, onRunFirstSync, isRefreshing, onFirstSyncDone }) {
+  // Section Client visible uniquement si plusieurs clients
   const workspacesEnabled = true
 
   const [token, setToken] = useState('')
@@ -19,7 +19,7 @@ export default function Settings({ workspaceId, onWorkspaceChange, onMetaTokenCh
   const [workspaceLoading, setWorkspaceLoading] = useState(false)
   const [workspaces, setWorkspaces] = useState([])
   const [newWorkspaceName, setNewWorkspaceName] = useState('')
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(workspaceId || getStoredWorkspaceId() || '')
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(workspaceId || '')
   const [members, setMembers] = useState([])
   const [membersLoading, setMembersLoading] = useState(false)
   const [membersError, setMembersError] = useState('')
@@ -250,10 +250,10 @@ export default function Settings({ workspaceId, onWorkspaceChange, onMetaTokenCh
       {workspacesEnabled && (
         <div className="settings-card settings-card-spaced">
           <header className="settings-subheader">
-            <h3>Workspaces</h3>
+            <h3>Client</h3>
           </header>
           <p className="settings-desc">
-            Select a workspace (stored locally). It will be sent via the <code>X-Workspace-Id</code> header.
+            Your session is scoped to a client. If you have access to multiple clients, you can switch here.
           </p>
 
           {workspaceLoading && <p className="settings-desc">Loading…</p>}
@@ -265,67 +265,71 @@ export default function Settings({ workspaceId, onWorkspaceChange, onMetaTokenCh
           )}
 
           <div className="settings-form">
-            <label htmlFor="workspace-select">Workspace</label>
-            <select
-              id="workspace-select"
-              value={selectedWorkspaceId}
-              onChange={(e) => {
-                const v = e.target.value
-                setSelectedWorkspaceId(v)
-                if (onWorkspaceChange) onWorkspaceChange(v || null)
-                else setStoredWorkspaceId(v || null)
-              }}
-              disabled={workspaceLoading}
-            >
-              <option value="">(none)</option>
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name} {w.role ? `(${w.role})` : ''}
-                </option>
-              ))}
-            </select>
+            {workspaces.length > 1 && (
+              <>
+                <label htmlFor="workspace-select">Client</label>
+                <select
+                  id="workspace-select"
+                  value={selectedWorkspaceId}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    setSelectedWorkspaceId(v)
+                    if (onWorkspaceChange) onWorkspaceChange(v || null)
+                  }}
+                  disabled={workspaceLoading}
+                >
+                  {workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} {w.role ? `(${w.role})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
 
-            <div className="settings-divider" />
-
-            <label htmlFor="workspace-create">Create a workspace</label>
-            <div className="settings-row">
-              <input
-                id="workspace-create"
-                value={newWorkspaceName}
-                onChange={(e) => setNewWorkspaceName(e.target.value)}
-                placeholder="Workspace name"
-                disabled={workspaceLoading}
-              />
-              <button
-                type="button"
-                className="save-btn"
-                disabled={workspaceLoading || !newWorkspaceName.trim()}
-                onClick={async () => {
-                  setWorkspaceLoading(true)
-                  setWorkspaceError('')
-                  try {
-                    const created = await api.workspaces.create(newWorkspaceName.trim())
-                    const ws = created.workspace
-                    const next = workspaces.some((w) => w.id === ws?.id)
-                      ? workspaces.map((w) => (w.id === ws?.id ? { ...w, name: ws.name } : w))
-                      : [...workspaces, ws].filter(Boolean)
-                    setWorkspaces(next)
-                    setNewWorkspaceName('')
-                    if (ws?.id) {
-                      setSelectedWorkspaceId(ws.id)
-                      if (onWorkspaceChange) onWorkspaceChange(ws.id)
-                      else setStoredWorkspaceId(ws.id)
-                    }
-                  } catch (e) {
-                    setWorkspaceError(e.message)
-                  } finally {
-                    setWorkspaceLoading(false)
-                  }
-                }}
-              >
-                Create
-              </button>
-            </div>
+            {(currentUser?.role === 'admin') && (
+              <>
+                <div className="settings-divider" />
+                <label htmlFor="workspace-create">Create a client</label>
+                <div className="settings-row">
+                  <input
+                    id="workspace-create"
+                    value={newWorkspaceName}
+                    onChange={(e) => setNewWorkspaceName(e.target.value)}
+                    placeholder="Client name"
+                    disabled={workspaceLoading}
+                  />
+                  <button
+                    type="button"
+                    className="save-btn"
+                    disabled={workspaceLoading || !newWorkspaceName.trim()}
+                    onClick={async () => {
+                      setWorkspaceLoading(true)
+                      setWorkspaceError('')
+                      try {
+                        const created = await api.workspaces.create(newWorkspaceName.trim())
+                        const ws = created.workspace
+                        const next = workspaces.some((w) => w.id === ws?.id)
+                          ? workspaces.map((w) => (w.id === ws?.id ? { ...w, name: ws.name } : w))
+                          : [...workspaces, ws].filter(Boolean)
+                        setWorkspaces(next)
+                        setNewWorkspaceName('')
+                        if (ws?.id) {
+                          setSelectedWorkspaceId(ws.id)
+                          if (onWorkspaceChange) onWorkspaceChange(ws.id)
+                        }
+                      } catch (e) {
+                        setWorkspaceError(e.message)
+                      } finally {
+                        setWorkspaceLoading(false)
+                      }
+                    }}
+                  >
+                    Create
+                  </button>
+                </div>
+              </>
+            )}
 
             {selectedWorkspaceId && (
               <>
@@ -334,7 +338,7 @@ export default function Settings({ workspaceId, onWorkspaceChange, onMetaTokenCh
                   <h3><UserPlus size={18} /> Members</h3>
                 </header>
                 <p className="settings-desc">
-                  People with access to this workspace. Only existing users can be added (they must sign up first).
+                  People with access to this client. Only existing users can be added (they must sign up first).
                 </p>
                 {membersLoading && <p className="settings-desc">Loading…</p>}
                 {membersError && (

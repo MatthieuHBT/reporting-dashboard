@@ -396,11 +396,34 @@ app.get('/api/auth/db/me', requireDbUser, async (req, res) => {
       const { listWorkspacesForUser } = await import('./db/workspaces.js')
       workspaces = await listWorkspacesForUser(user.id)
     } catch {}
-    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, pages, workspaces } })
+    res.json({ user: { id: user.id, email: user.email, name: user.name, role: user.role, pages, workspaces, workspaceId: req.workspaceId || req.user?.workspaceId || null } })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
+
+// Switch "client" (workspace) — retourne un nouveau JWT scoppé
+app.post('/api/auth/switch-workspace', requireDbUser, asyncHandler(async (req, res) => {
+  if (!hasDb()) return res.status(503).json({ error: 'Database not configured' })
+  const target = String(req.body?.workspaceId || '').trim()
+  if (!target) return res.status(400).json({ error: 'workspaceId required' })
+  try {
+    const { findUserByEmail } = await import('./db/auth.js')
+    const { getWorkspaceRole } = await import('./db/workspaces.js')
+    const user = await findUserByEmail(req.user.email)
+    if (!user) return res.status(401).json({ error: 'User not found' })
+    const role = await getWorkspaceRole(target, user.id)
+    if (!role) return res.status(403).json({ error: 'Not a member of this client' })
+    const token = jwt.sign(
+      { id: user.id, email: user.email, workspaceId: target },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    )
+    res.json({ token, workspaceId: target })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+}))
 
 // Workspaces (SaaS)
 app.get('/api/workspaces', requireDbUser, async (req, res) => {
