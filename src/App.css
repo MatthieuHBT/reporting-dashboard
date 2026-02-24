@@ -519,8 +519,8 @@
   position: relative;
 }
 
-.multi-select summary {
-  list-style: none;
+.multi-select-summary {
+  display: block;
   padding: 8px 12px;
   border: 1px solid var(--border);
   background: var(--bg-dark);
@@ -531,13 +531,16 @@
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  width: 100%;
+  text-align: left;
+  outline: none;
 }
 
-.multi-select summary::-webkit-details-marker {
-  display: none;
+.multi-select-summary:hover {
+  border-color: var(--text-muted);
 }
 
-.multi-select[open] summary {
+.multi-select.open .multi-select-summary {
   border-color: var(--accent);
 }
 

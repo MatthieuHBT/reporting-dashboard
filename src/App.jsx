@@ -109,6 +109,8 @@ const SIDEBAR_SECTIONS = [
 const DATE_RANGES = [
   { id: 'full', label: 'Full', days: 0, preset: 'full' },
   { id: 'today', label: 'Today', days: 1, preset: 'today' },
+  { id: 'yesterday', label: 'Yesterday', days: 1, preset: 'yesterday' },
+  { id: '7d', label: 'Last week', days: 7, preset: 'last_7d' },
   { id: '30d', label: 'Last 30 days', days: 30, preset: 'last_30d' },
   { id: 'custom', label: 'Custom', days: 0, preset: null },
 ]
@@ -149,7 +151,16 @@ function App() {
   const [budgetsList, setBudgetsList] = useState([])
   const [budgetsLoading, setBudgetsLoading] = useState(false)
   const [syncReport, setSyncReport] = useState(null) // { before, after, result } après une sync Meta
+  const [openMultiSelectId, setOpenMultiSelectId] = useState(null) // id du multi-select ouvert (pour ne pas fermer au clic sur une option)
   const hasSetInitialTab = useRef(false)
+
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (!e.target.closest('.multi-select')) setOpenMultiSelectId(null)
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [])
 
   const needsOnboarding = !!(dbMode && workspaceId && metaTokenConfigured === false)
   const hasSpendData = !!(spendData?.campaigns?.length > 0)
@@ -164,47 +175,55 @@ function App() {
 
   const MultiSelect = ({ id, title, options, selected, onChange, placeholder }) => {
     const list = Array.isArray(selected) ? selected : []
+    const isOpen = openMultiSelectId === id
     return (
-      <details className="multi-select" id={id}>
-        <summary title={title}>
+      <div className={`multi-select ${isOpen ? 'open' : ''}`} id={id}>
+        <button
+          type="button"
+          className="multi-select-summary"
+          title={title}
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpenMultiSelectId((prev) => (prev === id ? null : id)) }}
+        >
           {list.length ? `${title} (${list.length})` : placeholder}
-        </summary>
-        <div className="multi-select-menu" onClick={(e) => e.stopPropagation()}>
-          <div className="multi-select-actions">
-            <button
-              type="button"
-              className="multi-action-btn"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange([...options]) }}
-              disabled={!options?.length}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              className="multi-action-btn"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange([]) }}
-              disabled={!list.length}
-            >
-              None
-            </button>
+        </button>
+        {isOpen && (
+          <div className="multi-select-menu" onClick={(e) => e.stopPropagation()}>
+            <div className="multi-select-actions">
+              <button
+                type="button"
+                className="multi-action-btn"
+                onClick={(e) => { e.preventDefault(); onChange([...options]) }}
+                disabled={!options?.length}
+              >
+                All
+              </button>
+              <button
+                type="button"
+                className="multi-action-btn"
+                onClick={(e) => { e.preventDefault(); onChange([]) }}
+                disabled={!list.length}
+              >
+                None
+              </button>
+            </div>
+            <div className="multi-select-options">
+              {(options || []).map((opt) => (
+                <label key={opt} className="multi-select-option">
+                  <input
+                    type="checkbox"
+                    checked={list.includes(opt)}
+                    onChange={() => toggleMultiValue(onChange, opt)}
+                  />
+                  <span className="multi-select-label">{opt}</span>
+                </label>
+              ))}
+              {!options?.length && (
+                <div className="multi-select-empty">No options</div>
+              )}
+            </div>
           </div>
-          <div className="multi-select-options">
-            {(options || []).map((opt) => (
-              <label key={opt} className="multi-select-option">
-                <input
-                  type="checkbox"
-                  checked={list.includes(opt)}
-                  onChange={() => toggleMultiValue(onChange, opt)}
-                />
-                <span className="multi-select-label">{opt}</span>
-              </label>
-            ))}
-            {!options?.length && (
-              <div className="multi-select-empty">No options</div>
-            )}
-          </div>
-        </div>
-      </details>
+        )}
+      </div>
     )
   }
 
@@ -496,10 +515,16 @@ function App() {
     spendBudgetMeta,
   } = useMemo(() => {
     if (spendData?.campaigns?.length) {
-      let campaigns = [...spendData.campaigns]
       const getProductKey = (c) => normalizeProductName(
         c.productWithAnimal || (c.animal ? `${(c.productName || 'Other').trim()} ${c.animal}`.trim() : (c.productName || 'Other'))
       )
+      // Listes d'options depuis toutes les campagnes (non filtrées) pour garder multi-sélection possible
+      const allCampaigns = spendData.campaigns
+      const allProds = [...new Set(allCampaigns.map((c) => getProductKey(c)).filter(Boolean))].sort()
+      const allMkts = [...new Set(allCampaigns.map((c) => (getCampaignMarket(c) || 'Unknown')).filter(Boolean))].sort()
+      const allAccounts = spendData.accounts?.length ? spendData.accounts : [...new Set(allCampaigns.map((c) => c.accountName || '').filter(Boolean))].sort()
+
+      let campaigns = [...spendData.campaigns]
       if (filterAccount?.length) campaigns = campaigns.filter((c) => filterAccount.includes(c.accountName || c.accountId))
       if (filterProduct?.length) campaigns = campaigns.filter((c) => filterProduct.includes(getProductKey(c)))
       if (filterModel) campaigns = campaigns.filter((c) => extractModel(c.accountName || '') === filterModel)
@@ -572,9 +597,6 @@ function App() {
           const iso = String(dateStr || '').slice(0, 10)
           return { date: iso, spend: Math.round(spend * 100) / 100 }
         })
-      const allProds = [...new Set(campaigns.map((c) => getProductKey(c)).filter(Boolean))].sort()
-      const allMkts = [...new Set(spendData.campaigns.map((c) => (getCampaignMarket(c) || 'Unknown')).filter(Boolean))].sort()
-      const allAccounts = spendData.accounts?.length ? spendData.accounts : [...new Set(spendData.campaigns.map((c) => c.accountName || '').filter(Boolean))].sort()
       const byCampaign = {}
       for (const r of campaigns) {
         const key = r.campaignId || r.campaignName || `${r.accountName}-${r.campaignName}-${r.date}`
@@ -1893,7 +1915,7 @@ function App() {
               <div className="filters-row">
                 <div className="filter-group">
                   <Calendar size={16} />
-                  {DATE_RANGES.filter((r) => r.id !== 'custom').map((r) => (
+                  {DATE_RANGES.map((r) => (
                     <button
                       key={r.id}
                       className={`filter-chip ${dateRange === r.id ? 'active' : ''}`}
@@ -1902,6 +1924,30 @@ function App() {
                       {r.label}
                     </button>
                   ))}
+                  {dateRange === 'custom' && (
+                    <div className="date-range-inputs">
+                      <input
+                        id="date-from-winners"
+                        name="dateFromWinners"
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                        max={dateTo}
+                        className="date-input"
+                      />
+                      <span className="date-sep">→</span>
+                      <input
+                        id="date-to-winners"
+                        name="dateToWinners"
+                        type="date"
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        min={dateFrom}
+                        max={format(new Date(), 'yyyy-MM-dd')}
+                        className="date-input"
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="filter-group">
                   {dbMode && (
